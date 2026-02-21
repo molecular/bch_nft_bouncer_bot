@@ -28,6 +28,7 @@ const verificationState: Map<number, {
   groupId: number;
   groupName: string;
   challenge?: ReturnType<typeof createChallenge>;
+  challengeMessage?: string;
   address?: string;
   wcPairingTopic?: string;
 }> = new Map();
@@ -418,6 +419,7 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
 
       state.step = 'signature';
       state.challenge = challenge;
+      state.challengeMessage = challengeMessage;
       state.address = address;
 
       await ctx.reply(
@@ -438,20 +440,14 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
     // User is sending their signature
     const signature = text.replace(/\s+/g, ''); // Remove whitespace
 
-    if (!state.challenge || !state.address) {
+    if (!state.challenge || !state.address || !state.challengeMessage) {
       await ctx.reply('Session expired. Please start over with /verify');
       verificationState.delete(userId);
       return;
     }
 
-    const challengeMessage = generateChallengeMessage(
-      state.groupName,
-      state.groupId,
-      state.challenge.nonce
-    );
-
-    // Verify signature
-    const sigValid = await verifySignedMessage(challengeMessage, signature, state.address);
+    // Verify signature using stored challenge message
+    const sigValid = await verifySignedMessage(state.challengeMessage, signature, state.address);
 
     if (!sigValid) {
       await ctx.reply(

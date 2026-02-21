@@ -20,11 +20,11 @@ export async function verifySignedMessage(
 
     console.log('Signature verification result:', {
       address,
-      signatureValid: result.signatureValid,
-      signatureType: result.signatureType,
+      valid: result.valid,
+      details: result.details,
     });
 
-    return result.signatureValid;
+    return result.valid;
   } catch (error) {
     console.error('Signature verification error:', error);
     return false;
