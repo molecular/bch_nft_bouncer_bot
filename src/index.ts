@@ -72,6 +72,7 @@ async function main(): Promise<void> {
   ]);
 
   await bot.start({
+    allowed_updates: ['message', 'chat_member', 'my_chat_member'],
     onStart: (botInfo) => {
       console.log(`✅ Bot @${botInfo.username} is running!`);
     },

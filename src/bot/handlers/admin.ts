@@ -7,8 +7,10 @@ import {
   getNftCategories,
   isGroupConfigured,
   getGroup,
+  getVerificationsForMonitoring,
+  deleteVerification,
 } from '../../storage/queries.js';
-import { isValidCategoryId } from '../../blockchain/nft.js';
+import { isValidCategoryId, checkNftOwnership } from '../../blockchain/nft.js';
 
 export const adminHandlers = new Composer();
 
@@ -164,6 +166,98 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(statusMsg, { parse_mode: 'Markdown' });
 });
 
+// /scan - Re-check all verified users in this group
+adminHandlers.command('scan', requireGroupAdmin, async (ctx: Context) => {
+  if (ctx.chat?.type === 'private') {
+    await ctx.reply('This command must be used in a group.');
+    return;
+  }
+
+  const chatId = ctx.chat!.id;
+  const group = getGroup(chatId);
+
+  if (!group) {
+    await ctx.reply('This group is not set up. Run /setup first.');
+    return;
+  }
+
+  const categories = getNftCategories(chatId);
+  if (categories.length === 0) {
+    await ctx.reply('No NFT categories configured.');
+    return;
+  }
+
+  await ctx.reply('🔍 Scanning verified users...');
+
+  const verifications = getVerificationsForMonitoring().filter(
+    v => v.group_id === chatId
+  );
+
+  if (verifications.length === 0) {
+    await ctx.reply('No verified users to check.');
+    return;
+  }
+
+  let checked = 0;
+  let valid = 0;
+  let invalid = 0;
+  let kicked = 0;
+  let adminSkipped = 0;
+
+  for (const verification of verifications) {
+    checked++;
+
+    try {
+      const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
+
+      if (ownedNfts.length > 0) {
+        valid++;
+        continue;
+      }
+
+      invalid++;
+
+      // Check if user is admin
+      const member = await ctx.api.getChatMember(chatId, verification.telegram_user_id);
+      if (member.status === 'administrator' || member.status === 'creator') {
+        adminSkipped++;
+        deleteVerification(verification.id);
+        continue;
+      }
+
+      // Kick user
+      try {
+        await ctx.api.banChatMember(chatId, verification.telegram_user_id);
+        await ctx.api.unbanChatMember(chatId, verification.telegram_user_id);
+        kicked++;
+
+        // Notify user
+        await ctx.api.sendMessage(
+          verification.telegram_user_id,
+          `You have been removed from "${group.name}" because you no longer hold a qualifying NFT.\n\n` +
+          `If you still own a qualifying NFT, you can rejoin and verify again.`
+        ).catch(() => {}); // Ignore DM errors
+      } catch (kickError) {
+        console.error(`Failed to kick user ${verification.telegram_user_id}:`, kickError);
+      }
+
+      deleteVerification(verification.id);
+
+    } catch (error) {
+      console.error(`Error checking verification ${verification.id}:`, error);
+    }
+  }
+
+  await ctx.reply(
+    `✅ Scan complete!\n\n` +
+    `Checked: ${checked}\n` +
+    `Valid: ${valid}\n` +
+    `Invalid: ${invalid}\n` +
+    `Kicked: ${kicked}\n` +
+    `Admins skipped: ${adminSkipped}`
+  );
+});
+
 // /help - Show admin help
 adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(
@@ -171,7 +265,8 @@ adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
     `/setup - Initialize bot for this group\n` +
     `/addnft <category> - Add NFT category for access\n` +
     `/removenft <category> - Remove NFT category\n` +
-    `/status - Show group configuration\n\n` +
+    `/status - Show group configuration\n` +
+    `/scan - Re-check all verified users now\n\n` +
     `**How it works:**\n` +
     `1. Add bot to group as admin\n` +
     `2. Run /setup to initialize\n` +
