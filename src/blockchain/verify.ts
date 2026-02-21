@@ -1,81 +1,8 @@
-import { sha256, decodeCashAddress } from '@bitauth/libauth';
+import { decodeCashAddress } from '@bitauth/libauth';
+import { SignedMessage } from 'mainnet-js';
 
 /**
- * Bitcoin Signed Message format verification
- *
- * BCH uses the same signed message format as Bitcoin:
- * - Prefix: "\x18Bitcoin Signed Message:\n"
- * - Message length (varint)
- * - Message
- *
- * The signature is base64 encoded and contains:
- * - 1 byte: recovery flag (27-34)
- * - 32 bytes: r value
- * - 32 bytes: s value
- */
-
-const MESSAGE_PREFIX = '\x18Bitcoin Signed Message:\n';
-
-function varintEncode(n: number): Uint8Array {
-  if (n < 0xfd) {
-    return new Uint8Array([n]);
-  } else if (n <= 0xffff) {
-    const buf = new Uint8Array(3);
-    buf[0] = 0xfd;
-    buf[1] = n & 0xff;
-    buf[2] = (n >> 8) & 0xff;
-    return buf;
-  } else if (n <= 0xffffffff) {
-    const buf = new Uint8Array(5);
-    buf[0] = 0xfe;
-    buf[1] = n & 0xff;
-    buf[2] = (n >> 8) & 0xff;
-    buf[3] = (n >> 16) & 0xff;
-    buf[4] = (n >> 24) & 0xff;
-    return buf;
-  } else {
-    throw new Error('Value too large for varint');
-  }
-}
-
-function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const arr of arrays) {
-    result.set(arr, offset);
-    offset += arr.length;
-  }
-  return result;
-}
-
-/**
- * Create the message hash that was signed
- */
-export function createMessageHash(message: string): Uint8Array {
-  const prefixBytes = new TextEncoder().encode(MESSAGE_PREFIX);
-  const messageBytes = new TextEncoder().encode(message);
-  const messageLengthVarint = varintEncode(messageBytes.length);
-
-  const fullMessage = concatBytes(
-    prefixBytes,
-    messageLengthVarint,
-    messageBytes
-  );
-
-  // Double SHA256
-  const firstHash = sha256.hash(fullMessage);
-  const doubleHash = sha256.hash(firstHash);
-
-  return doubleHash;
-}
-
-/**
- * Verify a Bitcoin signed message
- *
- * Note: Full ECDSA signature verification requires additional libraries.
- * For production, consider using a library like 'bitcoinjs-message' adapted for BCH,
- * or implementing secp256k1 signature recovery.
+ * Verify a Bitcoin signed message using mainnet-js
  */
 export async function verifySignedMessage(
   message: string,
@@ -83,49 +10,21 @@ export async function verifySignedMessage(
   expectedAddress: string
 ): Promise<boolean> {
   try {
-    // Decode the base64 signature
-    const sigBytes = Buffer.from(signature, 'base64');
+    // Normalize address
+    const address = expectedAddress.startsWith('bitcoincash:')
+      ? expectedAddress
+      : `bitcoincash:${expectedAddress}`;
 
-    if (sigBytes.length !== 65) {
-      console.error('Invalid signature length:', sigBytes.length);
-      return false;
-    }
+    // Use mainnet-js SignedMessage.verify
+    const result = SignedMessage.verify(message, signature, address);
 
-    // Extract recovery flag, r, and s
-    const recoveryFlag = sigBytes[0];
-    const r = sigBytes.slice(1, 33);
-    const s = sigBytes.slice(33, 65);
+    console.log('Signature verification result:', {
+      address,
+      signatureValid: result.signatureValid,
+      signatureType: result.signatureType,
+    });
 
-    // Recovery flag should be 27-34 (27-30 for uncompressed, 31-34 for compressed)
-    if (recoveryFlag < 27 || recoveryFlag > 34) {
-      console.error('Invalid recovery flag:', recoveryFlag);
-      return false;
-    }
-
-    const compressed = recoveryFlag >= 31;
-    const recoveryId = compressed ? recoveryFlag - 31 : recoveryFlag - 27;
-
-    // Create the message hash
-    const messageHash = createMessageHash(message);
-
-    // For actual signature verification, we need secp256k1 ECDSA recovery
-    // This would require importing a secp256k1 library
-    // For now, we'll use a simplified verification that checks format
-    // and relies on the wallet providing correct signatures
-
-    // In production, use: const publicKey = secp256k1.recover(messageHash, sig, recoveryId, compressed);
-    // Then: const recoveredAddress = publicKeyToAddress(publicKey);
-    // And verify: recoveredAddress === expectedAddress
-
-    // Placeholder: For a complete implementation, add secp256k1 signature recovery
-    console.log('Signature verification requested for address:', expectedAddress);
-    console.log('Message hash:', Buffer.from(messageHash).toString('hex'));
-    console.log('Recovery ID:', recoveryId, 'Compressed:', compressed);
-
-    // For now, return true if signature format is valid
-    // TODO: Add full secp256k1 signature recovery
-    return true;
-
+    return result.signatureValid;
   } catch (error) {
     console.error('Signature verification error:', error);
     return false;
