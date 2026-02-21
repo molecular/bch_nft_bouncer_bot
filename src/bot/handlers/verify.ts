@@ -518,20 +518,30 @@ verifyHandlers.command('cancel', async (ctx: Context) => {
 
 async function addUserToGroup(ctx: Context, userId: number, groupId: number): Promise<void> {
   try {
-    // Generate invite link
-    const inviteLink = await ctx.api.createChatInviteLink(groupId, {
-      member_limit: 1,
-      expire_date: Math.floor(Date.now() / 1000) + 3600, // 1 hour
+    // Unrestrict user - restore full permissions
+    await ctx.api.restrictChatMember(groupId, userId, {
+      permissions: {
+        can_send_messages: true,
+        can_send_audios: true,
+        can_send_documents: true,
+        can_send_photos: true,
+        can_send_videos: true,
+        can_send_video_notes: true,
+        can_send_voice_notes: true,
+        can_send_polls: true,
+        can_send_other_messages: true,
+        can_add_web_page_previews: true,
+        can_invite_users: true,
+      },
     });
 
     await ctx.reply(
-      `🔗 Use this link to rejoin:\n${inviteLink.invite_link}\n\n` +
-      `(Link expires in 1 hour)`
+      `✅ You now have full access to the group!`
     );
   } catch (error) {
-    console.error('Error creating invite link:', error);
+    console.error('Error unrestricting user:', error);
     await ctx.reply(
-      'I couldn\'t create an invite link. Please ask a group admin to add you back.'
+      'Verification complete, but I couldn\'t update your permissions. Please ask a group admin.'
     );
   }
 }

@@ -59,38 +59,46 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   const botUsername = ctx.me.username;
   const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
 
-  // Post message in group BEFORE kicking so user sees it
   try {
+    // Restrict user - they can read but not post until verified
+    await ctx.api.restrictChatMember(chatId, userId, {
+      permissions: {
+        can_send_messages: false,
+        can_send_audios: false,
+        can_send_documents: false,
+        can_send_photos: false,
+        can_send_videos: false,
+        can_send_video_notes: false,
+        can_send_voice_notes: false,
+        can_send_polls: false,
+        can_send_other_messages: false,
+        can_add_web_page_previews: false,
+        can_invite_users: false,
+      },
+    });
+
+    // Track pending verification
+    addPendingKick(userId, chatId);
+
+    // Post message in group
     await ctx.api.sendMessage(
       chatId,
       `👋 ${username} - This group requires NFT verification.\n\n` +
-      `Click to verify and rejoin: ${deepLink}`
+      `You can read messages but cannot post until verified.\n\n` +
+      `Click to verify: ${deepLink}`
     );
-  } catch (msgError) {
-    console.log('Could not post verification message in group');
-  }
 
-  try {
-    // Kick the user with short ban (auto-unbans after 35 seconds - minimum is 30)
-    await ctx.api.banChatMember(chatId, userId, {
-      until_date: Math.floor(Date.now() / 1000) + 35,
-    });
-
-    // Track pending kick
-    addPendingKick(userId, chatId);
-
-    // Also try to DM (may work if user has messaged bot before)
+    // Also try to DM
     try {
       await ctx.api.sendMessage(
         userId,
         `👋 Hello ${username}!\n\n` +
-        `You tried to join **${group.name}**, which requires NFT verification.\n\n` +
-        `To join, you must prove you own a qualifying CashToken NFT.\n\n` +
-        `Click here to start verification:\n${deepLink}`,
+        `You joined **${group.name}**, which requires NFT verification.\n\n` +
+        `You can read messages but cannot post until verified.\n\n` +
+        `Click here to verify:\n${deepLink}`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError: any) {
-      // Expected if user hasn't messaged bot before
       console.log(`Could not DM user ${userId}:`, dmError.message);
     }
 
@@ -98,7 +106,7 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     console.error(`Error handling join for user ${userId}:`, error.message);
 
     if (error.message?.includes('not enough rights')) {
-      console.error('Bot does not have permission to kick users');
+      console.error('Bot does not have permission to restrict users');
     }
   }
 });
@@ -137,34 +145,43 @@ joinHandlers.on('message:new_chat_members', async (ctx: Context) => {
     const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
     const username = member.username ? `@${member.username}` : member.first_name;
 
-    // Post message in group BEFORE kicking so user sees it
     try {
+      // Restrict user - they can read but not post until verified
+      await ctx.api.restrictChatMember(chatId, userId, {
+        permissions: {
+          can_send_messages: false,
+          can_send_audios: false,
+          can_send_documents: false,
+          can_send_photos: false,
+          can_send_videos: false,
+          can_send_video_notes: false,
+          can_send_voice_notes: false,
+          can_send_polls: false,
+          can_send_other_messages: false,
+          can_add_web_page_previews: false,
+          can_invite_users: false,
+        },
+      });
+
+      // Track pending verification
+      addPendingKick(userId, chatId);
+
+      // Post message in group
       await ctx.api.sendMessage(
         chatId,
         `👋 ${username} - This group requires NFT verification.\n\n` +
-        `Click to verify and rejoin: ${deepLink}`
+        `You can read messages but cannot post until verified.\n\n` +
+        `Click to verify: ${deepLink}`
       );
-    } catch (msgError) {
-      console.log('Could not post verification message in group');
-    }
-
-    try {
-      // Kick the user with short ban (auto-unbans after 35 seconds)
-      await ctx.api.banChatMember(chatId, userId, {
-        until_date: Math.floor(Date.now() / 1000) + 35,
-      });
-
-      // Track pending kick
-      addPendingKick(userId, chatId);
 
       // Also try to DM
       try {
         await ctx.api.sendMessage(
           userId,
           `👋 Hello!\n\n` +
-          `You tried to join **${group.name}**, which requires NFT verification.\n\n` +
-          `To join, you must prove you own a qualifying CashToken NFT.\n\n` +
-          `Click here to start verification:\n${deepLink}`,
+          `You joined **${group.name}**, which requires NFT verification.\n\n` +
+          `You can read messages but cannot post until verified.\n\n` +
+          `Click here to verify:\n${deepLink}`,
           { parse_mode: 'Markdown' }
         );
       } catch (dmError) {
@@ -172,7 +189,7 @@ joinHandlers.on('message:new_chat_members', async (ctx: Context) => {
       }
 
     } catch (error: any) {
-      console.error(`Error kicking user ${userId}:`, error.message);
+      console.error(`Error restricting user ${userId}:`, error.message);
     }
   }
 });
