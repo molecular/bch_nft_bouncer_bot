@@ -526,8 +526,7 @@ async function addUserToGroup(ctx: Context, userId: number, groupId: number): Pr
 
     await ctx.reply(
       `🔗 Use this link to rejoin:\n${inviteLink.invite_link}\n\n` +
-      `_Link expires in 1 hour_`,
-      { parse_mode: 'Markdown' }
+      `(Link expires in 1 hour)`
     );
   } catch (error) {
     console.error('Error creating invite link:', error);

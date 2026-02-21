@@ -1,6 +1,6 @@
 import { getProvider } from './wallet.js';
-import { isNftAtAddress } from './nft.js';
-import { getVerificationsForMonitoring, deleteVerification } from '../storage/queries.js';
+import { isNftAtAddress, checkNftOwnership } from './nft.js';
+import { getVerificationsForMonitoring, deleteVerification, getNftCategories } from '../storage/queries.js';
 import type { Bot } from 'grammy';
 
 let monitoringInterval: ReturnType<typeof setInterval> | null = null;
@@ -41,7 +41,7 @@ export function stopMonitoring(): void {
 }
 
 /**
- * Check all verifications and kick users who no longer hold their NFT
+ * Check all verifications and kick users who no longer hold ANY qualifying NFT
  */
 async function checkAllVerifications(): Promise<void> {
   const verifications = getVerificationsForMonitoring();
@@ -54,15 +54,15 @@ async function checkAllVerifications(): Promise<void> {
 
   for (const verification of verifications) {
     try {
-      const stillHoldsNft = await isNftAtAddress(
-        verification.bch_address,
-        verification.nft_category,
-        verification.nft_commitment
-      );
+      // Get all qualifying categories for this group
+      const categories = getNftCategories(verification.group_id);
 
-      if (!stillHoldsNft) {
+      // Check if user still holds ANY qualifying NFT (not just the original one)
+      const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
+
+      if (ownedNfts.length === 0) {
         console.log(
-          `NFT no longer at address ${verification.bch_address} for user ${verification.telegram_user_id}`
+          `No qualifying NFTs at address ${verification.bch_address} for user ${verification.telegram_user_id}`
         );
 
         await handleNftTransferred(verification);
@@ -93,6 +93,21 @@ async function handleNftTransferred(verification: {
   }
 
   try {
+    // Check if user is admin/creator - don't kick them
+    const member = await botInstance.api.getChatMember(
+      verification.group_id,
+      verification.telegram_user_id
+    );
+
+    if (member.status === 'administrator' || member.status === 'creator') {
+      console.log(
+        `User ${verification.telegram_user_id} is admin/creator - not kicking, but removing verification`
+      );
+      // Still remove verification record so they'd need to re-verify if demoted
+      deleteVerification(verification.id);
+      return;
+    }
+
     // Try to kick the user from the group
     await botInstance.api.banChatMember(
       verification.group_id,
