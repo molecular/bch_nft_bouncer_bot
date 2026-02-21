@@ -108,16 +108,11 @@ async function handleNftTransferred(verification: {
       return;
     }
 
-    // Try to kick the user from the group
+    // Kick the user with short ban (auto-unbans after 35 seconds)
     await botInstance.api.banChatMember(
       verification.group_id,
-      verification.telegram_user_id
-    );
-
-    // Immediately unban so they can rejoin after re-verifying
-    await botInstance.api.unbanChatMember(
-      verification.group_id,
-      verification.telegram_user_id
+      verification.telegram_user_id,
+      { until_date: Math.floor(Date.now() / 1000) + 35 }
     );
 
     console.log(

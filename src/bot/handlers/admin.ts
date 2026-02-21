@@ -225,10 +225,11 @@ adminHandlers.command('scan', requireGroupAdmin, async (ctx: Context) => {
         continue;
       }
 
-      // Kick user
+      // Kick user with short ban (auto-unbans after 35 seconds)
       try {
-        await ctx.api.banChatMember(chatId, verification.telegram_user_id);
-        await ctx.api.unbanChatMember(chatId, verification.telegram_user_id);
+        await ctx.api.banChatMember(chatId, verification.telegram_user_id, {
+          until_date: Math.floor(Date.now() / 1000) + 35,
+        });
         kicked++;
 
         // Notify user

@@ -49,47 +49,54 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return; // Already verified, allow access
   }
 
-  // New unverified user - kick and send DM
+  // New unverified user - notify then kick
   console.log(`New unverified user ${userId} joined group ${chatId}, kicking...`);
 
+  const username = new_chat_member.user.username
+    ? `@${new_chat_member.user.username}`
+    : new_chat_member.user.first_name;
+
+  const botUsername = ctx.me.username;
+  const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
+
+  // Post message in group BEFORE kicking so user sees it
   try {
-    // Kick the user (ban then unban to allow rejoin)
-    await ctx.api.banChatMember(chatId, userId);
-    await ctx.api.unbanChatMember(chatId, userId);
+    await ctx.api.sendMessage(
+      chatId,
+      `👋 ${username} - This group requires NFT verification.\n\n` +
+      `Click to verify and rejoin: ${deepLink}`
+    );
+  } catch (msgError) {
+    console.log('Could not post verification message in group');
+  }
+
+  try {
+    // Kick the user with short ban (auto-unbans after 35 seconds - minimum is 30)
+    await ctx.api.banChatMember(chatId, userId, {
+      until_date: Math.floor(Date.now() / 1000) + 35,
+    });
 
     // Track pending kick
     addPendingKick(userId, chatId);
 
-    // Send DM with verification instructions
-    const username = new_chat_member.user.username
-      ? `@${new_chat_member.user.username}`
-      : new_chat_member.user.first_name;
-
+    // Also try to DM (may work if user has messaged bot before)
     try {
-      const botUsername = ctx.me.username;
-      const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
-
       await ctx.api.sendMessage(
         userId,
         `👋 Hello ${username}!\n\n` +
         `You tried to join **${group.name}**, which requires NFT verification.\n\n` +
         `To join, you must prove you own a qualifying CashToken NFT.\n\n` +
-        `Click here to start verification:\n${deepLink}\n\n` +
-        `Or use /verify in this chat.`,
+        `Click here to start verification:\n${deepLink}`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError: any) {
-      // User may have blocked the bot or never started a conversation
+      // Expected if user hasn't messaged bot before
       console.log(`Could not DM user ${userId}:`, dmError.message);
-
-      // Try to send a message in the group (will be visible briefly before kick)
-      // This is a fallback - the kick happens too fast usually
     }
 
   } catch (error: any) {
     console.error(`Error handling join for user ${userId}:`, error.message);
 
-    // Check if it's a permission error
     if (error.message?.includes('not enough rights')) {
       console.error('Bot does not have permission to kick users');
     }
@@ -126,19 +133,32 @@ joinHandlers.on('message:new_chat_members', async (ctx: Context) => {
 
     console.log(`New unverified user ${userId} (via new_chat_members) in group ${chatId}`);
 
+    const botUsername = ctx.me.username;
+    const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
+    const username = member.username ? `@${member.username}` : member.first_name;
+
+    // Post message in group BEFORE kicking so user sees it
     try {
-      // Kick the user
-      await ctx.api.banChatMember(chatId, userId);
-      await ctx.api.unbanChatMember(chatId, userId);
+      await ctx.api.sendMessage(
+        chatId,
+        `👋 ${username} - This group requires NFT verification.\n\n` +
+        `Click to verify and rejoin: ${deepLink}`
+      );
+    } catch (msgError) {
+      console.log('Could not post verification message in group');
+    }
+
+    try {
+      // Kick the user with short ban (auto-unbans after 35 seconds)
+      await ctx.api.banChatMember(chatId, userId, {
+        until_date: Math.floor(Date.now() / 1000) + 35,
+      });
 
       // Track pending kick
       addPendingKick(userId, chatId);
 
-      // Send DM
+      // Also try to DM
       try {
-        const botUsername = ctx.me.username;
-        const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
-
         await ctx.api.sendMessage(
           userId,
           `👋 Hello!\n\n` +
