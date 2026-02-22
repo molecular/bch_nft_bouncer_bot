@@ -1,6 +1,6 @@
 import { getProvider } from './wallet.js';
 import { isNftAtAddress, checkNftOwnership } from './nft.js';
-import { getVerificationsForMonitoring, deleteVerification, getNftCategories } from '../storage/queries.js';
+import { getVerificationsForMonitoring, deleteVerification, getNftCategories, getGroup } from '../storage/queries.js';
 import type { Bot } from 'grammy';
 
 let monitoringInterval: ReturnType<typeof setInterval> | null = null;
@@ -88,7 +88,11 @@ async function checkAllVerifications(): Promise<void> {
 
   // Log summary
   const groupInfo = Array.from(groupCounts.entries())
-    .map(([gid, count]) => `${gid}:${count}`)
+    .map(([gid, count]) => {
+      const group = getGroup(gid);
+      const name = group?.name || String(gid);
+      return `${name}:${count}`;
+    })
     .join(', ');
   console.log(
     `[monitor] ${verifications.length} users | ${valid} valid, ${invalid} invalid, ${errors} errors | groups: ${groupInfo}`
