@@ -18,6 +18,9 @@ const pendingPairings: Map<string, {
   reject: (error: Error) => void;
 }> = new Map();
 
+// Track rejected pairings so polling can detect them
+const rejectedPairings: Map<number, { message: string; code: number }> = new Map();
+
 export async function initWalletConnect(): Promise<SignClient> {
   if (signClient) {
     return signClient;
@@ -137,7 +140,11 @@ export async function createPairing(
     const pending = pendingPairings.get(pairingTopic);
     if (pending) {
       pendingPairings.delete(pairingTopic);
-      pending.reject(error);
+      // Store rejection so polling can detect it
+      rejectedPairings.set(pending.telegramUserId, {
+        message: error?.message || 'Connection rejected',
+        code: error?.code || 0,
+      });
     }
   });
 
@@ -168,6 +175,17 @@ export function getUserSession(telegramUserId: number): {
   addresses: string[];
 } | undefined {
   return userSessions.get(telegramUserId);
+}
+
+/**
+ * Check if user rejected the connection and clear the rejection
+ */
+export function checkAndClearRejection(telegramUserId: number): { message: string; code: number } | undefined {
+  const rejection = rejectedPairings.get(telegramUserId);
+  if (rejection) {
+    rejectedPairings.delete(telegramUserId);
+  }
+  return rejection;
 }
 
 /**

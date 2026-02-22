@@ -65,6 +65,12 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
+  // Handle uncaught promise rejections (e.g., WalletConnect timeouts)
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled rejection:', reason);
+    // Don't crash - just log it
+  });
+
   // Start polling
   console.log('✅ Bot starting...');
 

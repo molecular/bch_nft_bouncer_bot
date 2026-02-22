@@ -12,8 +12,9 @@ restart_bot() {
 trap restart_bot SIGINT
 
 while true; do
+  echo -e "\n\n========== Bot starting at $(date) ==========\n" >> bot.log
   # Use process substitution to keep tsx as the main process we track
-  npx tsx watch src/index.ts > >(tee bot.log) 2>&1 &
+  npx tsx src/index.ts 2>&1 | tee -a bot.log &
   BOT_PID=$!
   wait $BOT_PID
   echo "Bot exited, restarting in 3s..."

@@ -18,7 +18,7 @@ import {
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId } from '../../blockchain/nft.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
-import { createPairing, getUserSession, disconnectSession } from '../../walletconnect/session.js';
+import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
 import { requestAddresses, requestSignMessage } from '../../walletconnect/sign.js';
 import { config } from '../../config.js';
@@ -27,13 +27,14 @@ export const verifyHandlers = new Composer();
 
 // Conversation state for verification flow
 const verificationState: Map<number, {
-  step: 'address' | 'signature' | 'wc_waiting';
+  step: 'address' | 'signature' | 'wc_waiting' | 'wc_sign_pending';
   groupId: number;
   groupName: string;
   challenge?: ReturnType<typeof createChallenge>;
   challengeMessage?: string;
   address?: string;
   wcPairingTopic?: string;
+  wcNft?: { category: string; commitment: string | null };
 }> = new Map();
 
 // /start - Handle start with or without deep link
@@ -92,6 +93,7 @@ verifyHandlers.command('start', async (ctx: Context) => {
 
 // /verify - Start verification process
 verifyHandlers.command('verify', async (ctx: Context) => {
+  console.log(`/verify command received, chat type: ${ctx.chat?.type}, chat id: ${ctx.chat?.id}`);
   if (ctx.chat?.type !== 'private') {
     // In a group, reply with the deeplink
     const chatId = ctx.chat!.id;
@@ -201,6 +203,10 @@ verifyHandlers.command('wc', async (ctx: Context) => {
   await ctx.reply('🔄 Generating WalletConnect QR code...');
 
   try {
+    // Disconnect any existing session and clear any pending rejection
+    await disconnectSession(userId);
+    checkAndClearRejection(userId);
+
     const { uri, pairingTopic } = await createPairing(userId, state.groupId);
 
     // Generate QR code
@@ -214,7 +220,7 @@ verifyHandlers.command('wc', async (ctx: Context) => {
     await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
       caption:
         '📱 **Scan with your BCH wallet that supports WalletConnect**\n\n' +
-        'After connecting, I\'ll automatically verify your NFT ownership.',
+        'After connecting, I\'ll let you sign a message with the key that owns the NFT.',
       parse_mode: 'Markdown',
     });
 
@@ -235,6 +241,91 @@ verifyHandlers.command('wc', async (ctx: Context) => {
   }
 });
 
+// /sign - Resend signature request (after rejection)
+verifyHandlers.command('sign', async (ctx: Context) => {
+  if (ctx.chat?.type !== 'private') return;
+
+  const userId = ctx.from!.id;
+  const state = verificationState.get(userId);
+
+  if (!state || state.step !== 'wc_sign_pending') {
+    await ctx.reply('No pending signature request. Use /verify to start verification.');
+    return;
+  }
+
+  if (!state.address || !state.wcNft || !state.challengeMessage) {
+    await ctx.reply('Session expired. Please use /wc to reconnect.');
+    state.step = 'address';
+    return;
+  }
+
+  // Check if session is still active
+  const session = getUserSession(userId);
+  if (!session) {
+    await ctx.reply('Wallet disconnected. Please use /wc to reconnect.');
+    state.step = 'address';
+    return;
+  }
+
+  await ctx.reply('📝 Resending signature request to your wallet...');
+
+  try {
+    const signature = await requestSignMessage(userId, state.challengeMessage, state.address);
+
+    // Verify signature
+    const sigValid = await verifySignedMessage(state.challengeMessage, signature, state.address);
+    if (!sigValid) {
+      await ctx.reply('❌ Signature verification failed. Please try again with /sign');
+      return;
+    }
+
+    // Success! Store verification
+    const username = ctx.from?.username || null;
+    addVerification(userId, username, state.groupId, state.wcNft.category, state.wcNft.commitment, state.address);
+    if (state.challenge) {
+      deleteChallenge(state.challenge.id);
+    }
+    deletePendingKick(userId, state.groupId);
+
+    await ctx.reply(
+      '✅ **Verification successful!**\n\n' +
+      `NFT: \`${state.wcNft.category.slice(0, 16)}...${state.wcNft.commitment ? ` (${state.wcNft.commitment.slice(0, 8)}...)` : ''}\`\n\n` +
+      'You now have full access to the group!',
+      { parse_mode: 'Markdown' }
+    );
+
+    // Try to add user back to group
+    await addUserToGroup(ctx, userId, state.groupId);
+
+    await disconnectSession(userId);
+    verificationState.delete(userId);
+
+  } catch (error: any) {
+    console.error('Sign retry error:', error);
+
+    const isRejection = error?.message?.includes('rejected') || error?.message?.includes('Rejected') || error?.code === 5000;
+    const isTimeout = error?.message?.includes('expired') || error?.message?.includes('timeout');
+
+    if (isRejection) {
+      await ctx.reply(
+        '❌ Signature rejected again.\n\n' +
+        'Send /sign to try again, or /wc to reconnect wallet.'
+      );
+    } else if (isTimeout) {
+      await ctx.reply(
+        '⏰ Signature request timed out.\n\n' +
+        'Send /sign to try again, or /wc to reconnect wallet.'
+      );
+    } else {
+      state.step = 'address';
+      await ctx.reply(
+        '❌ Signature failed.\n\n' +
+        'Send /wc to reconnect wallet.'
+      );
+    }
+  }
+});
+
 async function handleWcVerification(
   ctx: Context,
   userId: number,
@@ -246,6 +337,23 @@ async function handleWcVerification(
 
   const checkSession = async (): Promise<void> => {
     attempts++;
+
+    // Check if user rejected the connection
+    const rejection = checkAndClearRejection(userId);
+    if (rejection) {
+      state.step = 'address';
+      try {
+        await ctx.reply(
+          '❌ Connection rejected in wallet.\n\n' +
+          'To try again:\n' +
+          '• Send /wc for a new QR code\n' +
+          '• Or send your BCH address for manual verification'
+        );
+      } catch (replyError) {
+        console.error('Failed to send rejection reply:', replyError);
+      }
+      return;
+    }
 
     const session = getUserSession(userId);
     if (session) {
@@ -291,6 +399,10 @@ async function handleWcVerification(
           return;
         }
 
+        // Store address and NFT for potential retry
+        state.address = address;
+        state.wcNft = { category: nft.category, commitment: nft.commitment };
+
         // Request signature for additional verification
         const challenge = createChallenge(userId, state.groupId, address);
         const challengeMessage = generateChallengeMessage(
@@ -298,6 +410,8 @@ async function handleWcVerification(
           state.groupId,
           challenge.nonce
         );
+        state.challenge = challenge;
+        state.challengeMessage = challengeMessage;
 
         await ctx.reply(
           '📝 Please approve the signature request in your wallet to complete verification...'
@@ -334,32 +448,77 @@ async function handleWcVerification(
         await disconnectSession(userId);
         verificationState.delete(userId);
 
-      } catch (error) {
+      } catch (error: any) {
         console.error('WC verification error:', error);
-        await ctx.reply(
-          '❌ Verification failed. Please try again or use manual verification.'
-        );
-        await disconnectSession(userId);
-        verificationState.delete(userId);
+
+        const isTimeout = error?.message?.includes('expired') || error?.message?.includes('timeout');
+        const isRejection = error?.message?.includes('rejected') || error?.message?.includes('Rejected') || error?.code === 5000;
+
+        if (isRejection) {
+          // User rejected signature - keep session, allow retry with /sign
+          state.step = 'wc_sign_pending';
+          await ctx.reply(
+            '❌ Signature rejected.\n\n' +
+            'To try again:\n' +
+            '• Send /sign to resend the signature request\n' +
+            '• Send /wc to reconnect wallet\n' +
+            '• Or send your BCH address for manual verification'
+          );
+        } else if (isTimeout) {
+          // Timeout - disconnect and allow /wc retry
+          try {
+            await disconnectSession(userId);
+          } catch (disconnectError) {
+            // Ignore disconnect errors
+          }
+          state.step = 'address';
+          await ctx.reply(
+            '⏰ Signing request timed out.\n\n' +
+            'To try again:\n' +
+            '• Send /wc for a new QR code\n' +
+            '• Or send your BCH address for manual verification'
+          );
+        } else {
+          // Other error - disconnect and allow retry
+          try {
+            await disconnectSession(userId);
+          } catch (disconnectError) {
+            // Ignore disconnect errors
+          }
+          state.step = 'address';
+          await ctx.reply(
+            '❌ Verification failed.\n\n' +
+            'To try again:\n' +
+            '• Send /wc for a new QR code\n' +
+            '• Or send your BCH address for manual verification'
+          );
+        }
       }
       return;
     }
 
     if (attempts >= maxAttempts) {
+      // Keep state so user can retry with /wc
+      state.step = 'address';
       await ctx.reply(
-        '⏰ WalletConnect session timed out.\n\n' +
-        'Use /verify to try again, or send your BCH address for manual verification.'
+        '⏰ WalletConnect connection timed out (no wallet connected).\n\n' +
+        'To try again:\n' +
+        '• Send /wc for a new QR code\n' +
+        '• Or send your BCH address for manual verification'
       );
-      verificationState.delete(userId);
       return;
     }
 
     // Continue polling
-    setTimeout(checkSession, 5000);
+    setTimeout(() => {
+      checkSession().catch(err => console.error('checkSession error:', err));
+    }, 5000);
   };
 
   // Start polling after a short delay
-  setTimeout(checkSession, 5000);
+  setTimeout(() => {
+    checkSession().catch(err => console.error('checkSession error:', err));
+  }, 5000);
 }
 
 // Handle text messages for manual verification

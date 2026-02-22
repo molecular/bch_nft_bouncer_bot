@@ -113,28 +113,37 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
 
 // Catch unverified users trying to post in gated groups
 // This handles cases where the join event was missed (user was already in group, bot was offline, etc.)
-joinHandlers.on('message', async (ctx: Context) => {
+joinHandlers.on('message', async (ctx: Context, next) => {
   // Only handle group messages
   if (!ctx.chat || ctx.chat.type === 'private') {
-    return;
+    return next();
   }
 
   const chatId = ctx.chat.id;
   const userId = ctx.from?.id;
+  const text = (ctx.message as any)?.text || '';
 
-  if (!userId) return;
+  console.log(`[join] message handler: user=${userId}, chat=${chatId}, text="${text.slice(0, 20)}..."`);
+
+  if (!userId) return next();
+
+  // Skip command messages - let command handlers process them
+  if (text.startsWith('/')) {
+    console.log(`[join] skipping command message`);
+    return next();
+  }
 
   // Check if this group is configured for NFT gating
   const group = getGroup(chatId);
   if (!group || !isGroupConfigured(chatId)) {
-    return; // Not a gated group
+    return next(); // Not a gated group
   }
 
   // Check if user is admin/creator (they're exempt)
   try {
     const member = await ctx.api.getChatMember(chatId, userId);
     if (member.status === 'administrator' || member.status === 'creator') {
-      return;
+      return next();
     }
   } catch (error) {
     // If we can't check membership, continue with verification check
@@ -143,7 +152,7 @@ joinHandlers.on('message', async (ctx: Context) => {
   // Check if user is verified
   const verification = getVerification(userId, chatId);
   if (verification) {
-    return; // User is verified, allow message
+    return next(); // User is verified, allow message
   }
 
   // Unverified user posted - delete message and remind them
