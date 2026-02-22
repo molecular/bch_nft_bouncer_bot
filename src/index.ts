@@ -1,3 +1,6 @@
+// Polyfills must be imported first
+import './polyfills.js';
+
 import { config, validateConfig } from './config.js';
 import { initializeDatabase, closeDatabase } from './storage/db.js';
 import { cleanupExpiredChallenges } from './storage/queries.js';

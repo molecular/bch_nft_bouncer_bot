@@ -2,6 +2,21 @@ import { decodeCashAddress } from '@bitauth/libauth';
 import { SignedMessage } from 'mainnet-js';
 
 /**
+ * Convert hex string to base64
+ */
+function hexToBase64(hex: string): string {
+  const bytes = Buffer.from(hex, 'hex');
+  return bytes.toString('base64');
+}
+
+/**
+ * Check if string is hex
+ */
+function isHex(str: string): boolean {
+  return /^[0-9a-fA-F]+$/.test(str);
+}
+
+/**
  * Verify a Bitcoin signed message using mainnet-js
  */
 export async function verifySignedMessage(
@@ -15,8 +30,16 @@ export async function verifySignedMessage(
       ? expectedAddress
       : `bitcoincash:${expectedAddress}`;
 
+    // Normalize signature - convert hex to base64 if needed
+    let normalizedSig = signature;
+    if (isHex(signature) && signature.length >= 128) {
+      // Looks like hex signature, convert to base64
+      normalizedSig = hexToBase64(signature);
+      console.log('Converted hex signature to base64:', normalizedSig.slice(0, 20) + '...');
+    }
+
     // Use mainnet-js SignedMessage.verify
-    const result = SignedMessage.verify(message, signature, address);
+    const result = SignedMessage.verify(message, normalizedSig, address);
 
     console.log('Signature verification result:', {
       address,

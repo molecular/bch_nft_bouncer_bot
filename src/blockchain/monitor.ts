@@ -50,9 +50,16 @@ async function checkAllVerifications(): Promise<void> {
     return;
   }
 
-  console.log(`Checking ${verifications.length} verifications...`);
+  // Aggregate stats
+  let valid = 0;
+  let invalid = 0;
+  let errors = 0;
+  const groupCounts = new Map<number, number>();
 
   for (const verification of verifications) {
+    // Count by group
+    groupCounts.set(verification.group_id, (groupCounts.get(verification.group_id) || 0) + 1);
+
     try {
       // Get all qualifying categories for this group
       const categories = getNftCategories(verification.group_id);
@@ -61,19 +68,31 @@ async function checkAllVerifications(): Promise<void> {
       const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
 
       if (ownedNfts.length === 0) {
+        invalid++;
         console.log(
           `No qualifying NFTs at address ${verification.bch_address} for user ${verification.telegram_user_id}`
         );
 
         await handleNftTransferred(verification);
+      } else {
+        valid++;
       }
     } catch (error) {
+      errors++;
       console.error(
         `Error checking verification ${verification.id}:`,
         error
       );
     }
   }
+
+  // Log summary
+  const groupInfo = Array.from(groupCounts.entries())
+    .map(([gid, count]) => `${gid}:${count}`)
+    .join(', ');
+  console.log(
+    `[monitor] ${verifications.length} users | ${valid} valid, ${invalid} invalid, ${errors} errors | groups: ${groupInfo}`
+  );
 }
 
 /**

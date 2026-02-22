@@ -1,4 +1,4 @@
-import SignClient from '@walletconnect/sign-client';
+import { SignClient } from '@walletconnect/sign-client';
 import { config } from '../config.js';
 
 let signClient: SignClient | null = null;

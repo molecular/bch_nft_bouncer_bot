@@ -1,19 +1,4 @@
 import { Context, NextFunction } from 'grammy';
-import { config } from '../../config.js';
-
-/**
- * Middleware to check if user is a bot admin (from env config)
- */
-export async function requireBotAdmin(ctx: Context, next: NextFunction): Promise<void> {
-  const userId = ctx.from?.id;
-
-  if (!userId || !config.adminUserIds.includes(userId)) {
-    await ctx.reply('This command is only available to bot administrators.');
-    return;
-  }
-
-  await next();
-}
 
 /**
  * Middleware to check if user is a group admin
@@ -27,13 +12,9 @@ export async function requireGroupAdmin(ctx: Context, next: NextFunction): Promi
     return;
   }
 
-  // In private chats, check if user is bot admin
+  // Admin commands only work in groups
   if (ctx.chat?.type === 'private') {
-    if (!config.adminUserIds.includes(userId)) {
-      await ctx.reply('This command requires admin privileges.');
-      return;
-    }
-    await next();
+    await ctx.reply('This command must be used in a group.');
     return;
   }
 

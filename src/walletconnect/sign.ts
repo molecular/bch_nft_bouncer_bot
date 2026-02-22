@@ -17,7 +17,7 @@ export async function requestAddresses(telegramUserId: number): Promise<BchAddre
   const client = await getSignClient();
 
   try {
-    const result = await client.request<BchAddressInfo[]>({
+    const result = await client.request<BchAddressInfo[] | Record<string, unknown>>({
       topic: session.topic,
       chainId: 'bch:bitcoincash',
       request: {
@@ -26,11 +26,34 @@ export async function requestAddresses(telegramUserId: number): Promise<BchAddre
       },
     });
 
-    // Store addresses for later use
-    const addresses = result.map(a => a.address);
+    console.log('bch_getAddresses raw result:', JSON.stringify(result, null, 2));
+
+    // Handle different response formats
+    let addresses: string[] = [];
+
+    if (Array.isArray(result)) {
+      if (result.length > 0) {
+        if (typeof result[0] === 'string') {
+          // Format: ["bitcoincash:qp..."]
+          addresses = result as string[];
+        } else if (typeof result[0] === 'object' && result[0].address) {
+          // Format: [{ address: "bitcoincash:qp..." }]
+          addresses = (result as BchAddressInfo[]).map(a => a.address);
+        }
+      }
+    } else if (typeof result === 'object' && result !== null) {
+      const addr = (result as Record<string, unknown>).address as string;
+      if (addr) {
+        addresses = [addr];
+      }
+    }
+
+    addresses = addresses.filter(Boolean);
+    console.log('Parsed addresses:', addresses);
     setUserAddresses(telegramUserId, addresses);
 
-    return result;
+    // Return in expected format
+    return addresses.map(addr => ({ address: addr }));
   } catch (error) {
     console.error('Error requesting addresses:', error);
     throw error;
@@ -53,7 +76,7 @@ export async function requestSignMessage(
   const client = await getSignClient();
 
   try {
-    const result = await client.request<{ signature: string }>({
+    const result = await client.request<string | { signature: string } | Record<string, unknown>>({
       topic: session.topic,
       chainId: 'bch:bitcoincash',
       request: {
@@ -65,7 +88,25 @@ export async function requestSignMessage(
       },
     });
 
-    return result.signature;
+    console.log('bch_signMessage raw result:', JSON.stringify(result, null, 2));
+
+    // Handle different response formats
+    let signature: string;
+
+    if (typeof result === 'string') {
+      // Direct string signature
+      signature = result;
+    } else if (typeof result === 'object' && result !== null) {
+      // Object with signature property
+      signature = (result as Record<string, unknown>).signature as string
+        || (result as Record<string, unknown>).sig as string
+        || '';
+    } else {
+      signature = '';
+    }
+
+    console.log('Parsed signature:', signature ? `${signature.slice(0, 20)}...` : 'empty');
+    return signature;
   } catch (error) {
     console.error('Error requesting signature:', error);
     throw error;
