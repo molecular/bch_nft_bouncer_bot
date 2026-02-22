@@ -111,4 +111,85 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   }
 });
 
+// Catch unverified users trying to post in gated groups
+// This handles cases where the join event was missed (user was already in group, bot was offline, etc.)
+joinHandlers.on('message', async (ctx: Context) => {
+  // Only handle group messages
+  if (!ctx.chat || ctx.chat.type === 'private') {
+    return;
+  }
+
+  const chatId = ctx.chat.id;
+  const userId = ctx.from?.id;
+
+  if (!userId) return;
+
+  // Check if this group is configured for NFT gating
+  const group = getGroup(chatId);
+  if (!group || !isGroupConfigured(chatId)) {
+    return; // Not a gated group
+  }
+
+  // Check if user is admin/creator (they're exempt)
+  try {
+    const member = await ctx.api.getChatMember(chatId, userId);
+    if (member.status === 'administrator' || member.status === 'creator') {
+      return;
+    }
+  } catch (error) {
+    // If we can't check membership, continue with verification check
+  }
+
+  // Check if user is verified
+  const verification = getVerification(userId, chatId);
+  if (verification) {
+    return; // User is verified, allow message
+  }
+
+  // Unverified user posted - delete message and remind them
+  console.log(`Unverified user ${userId} posted in gated group ${chatId}, deleting message`);
+
+  const username = ctx.from?.username
+    ? `@${ctx.from.username}`
+    : ctx.from?.first_name || 'User';
+
+  const botUsername = ctx.me.username;
+  const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
+
+  try {
+    // Delete the message
+    await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
+
+    // Restrict user (in case they weren't already)
+    await ctx.api.restrictChatMember(chatId, userId, {
+      permissions: {
+        can_send_messages: false,
+        can_send_audios: false,
+        can_send_documents: false,
+        can_send_photos: false,
+        can_send_videos: false,
+        can_send_video_notes: false,
+        can_send_voice_notes: false,
+        can_send_polls: false,
+        can_send_other_messages: false,
+        can_add_web_page_previews: false,
+        can_invite_users: false,
+      },
+    });
+
+    // Track pending verification
+    addPendingKick(userId, chatId);
+
+    // Notify in group
+    await ctx.api.sendMessage(
+      chatId,
+      `⚠️ ${username} - You must verify NFT ownership before posting.\n\n` +
+      `Click to verify: ${deepLink}`
+    );
+
+  } catch (error: any) {
+    console.error(`Error handling unverified message from ${userId}:`, error.message);
+  }
+});
+
 // Note: new_chat_members handler removed - using chat_member updates instead
