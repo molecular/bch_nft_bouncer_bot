@@ -51,21 +51,21 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
     `ID: ${chatId}\n\n` +
     (configured
       ? 'NFT categories are already configured. Use /status to view them.'
-      : 'Next step: Add NFT categories with /addnft <category_id>')
+      : 'Next step: Add NFT categories with /add_category <category_id>')
   );
 });
 
-// /addnft <category> - Add NFT category for group access
-adminHandlers.command('addnft', requireGroupAdmin, async (ctx: Context) => {
+// /add_category <category> - Add NFT category for group access
+adminHandlers.command('add_category', requireGroupAdmin, async (ctx: Context) => {
   const chatId = ctx.chat?.type === 'private' ? null : ctx.chat?.id;
   const args = ctx.match as string;
 
   if (!args) {
     await ctx.reply(
-      'Usage: /addnft <category_id>\n\n' +
+      'Usage: /add_category <category_id>\n\n' +
       'The category ID is a 64-character hex string (transaction ID of the NFT genesis).\n\n' +
       'Example:\n' +
-      '/addnft 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+      '/add_category 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
     );
     return;
   }
@@ -102,13 +102,13 @@ adminHandlers.command('addnft', requireGroupAdmin, async (ctx: Context) => {
   );
 });
 
-// /removenft <category> - Remove NFT category
-adminHandlers.command('removenft', requireGroupAdmin, async (ctx: Context) => {
+// /remove_category <category> - Remove NFT category
+adminHandlers.command('remove_category', requireGroupAdmin, async (ctx: Context) => {
   const chatId = ctx.chat?.type === 'private' ? null : ctx.chat?.id;
   const args = ctx.match as string;
 
   if (!args) {
-    await ctx.reply('Usage: /removenft <category_id>');
+    await ctx.reply('Usage: /remove_category <category_id>');
     return;
   }
 
@@ -123,8 +123,8 @@ adminHandlers.command('removenft', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(`✅ NFT category removed (if it existed).`);
 });
 
-// /listnfts - List configured NFT categories
-adminHandlers.command('listnfts', requireGroupAdmin, async (ctx: Context) => {
+// /list_categories - List configured NFT categories
+adminHandlers.command('list_categories', requireGroupAdmin, async (ctx: Context) => {
   if (ctx.chat?.type === 'private') {
     await ctx.reply('This command must be used in a group.');
     return;
@@ -141,7 +141,7 @@ adminHandlers.command('listnfts', requireGroupAdmin, async (ctx: Context) => {
   const categories = getNftCategories(chatId);
 
   if (categories.length === 0) {
-    await ctx.reply('No NFT categories configured.\n\nUse /addnft <category_id> to add one.');
+    await ctx.reply('No NFT categories configured.\n\nUse /add_category <category_id> to add one.');
     return;
   }
 
@@ -190,7 +190,7 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
       statusMsg += `${i + 1}. \`${cat}\`\n`;
     });
   } else {
-    statusMsg += '_No categories configured. Use /addnft to add one._';
+    statusMsg += '_No categories configured. Use /add_category to add one._';
   }
 
   await ctx.reply(statusMsg, { parse_mode: 'Markdown' });
@@ -294,15 +294,15 @@ adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(
     `🔧 **Admin Commands**\n\n` +
     `/setup - Initialize bot for this group\n` +
-    `/addnft <category> - Add NFT category for access\n` +
-    `/removenft <category> - Remove NFT category\n` +
-    `/listnfts - List configured NFT categories\n` +
+    `/add_category <category> - Add NFT category for access\n` +
+    `/remove_category <category> - Remove NFT category\n` +
+    `/list_categories - List configured NFT categories\n` +
     `/status - Show full group configuration\n` +
     `/scan - Re-check all verified users now\n\n` +
     `**How it works:**\n` +
     `1. Add bot to group as admin\n` +
     `2. Run /setup to initialize\n` +
-    `3. Add NFT categories with /addnft\n` +
+    `3. Add NFT categories with /add_category\n` +
     `4. Enable "Hidden message history" in group settings\n` +
     `5. New members will be kicked and asked to verify NFT ownership via DM`,
     { parse_mode: 'Markdown' }
