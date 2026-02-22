@@ -213,10 +213,7 @@ verifyHandlers.command('wc', async (ctx: Context) => {
     // Send QR code
     await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
       caption:
-        '📱 **Scan with your BCH wallet**\n\n' +
-        'Supported wallets:\n' +
-        '• Cashonize\n' +
-        '• Paytaca\n\n' +
+        '📱 **Scan with your BCH wallet that supports WalletConnect**\n\n' +
         'After connecting, I\'ll automatically verify your NFT ownership.',
       parse_mode: 'Markdown',
     });

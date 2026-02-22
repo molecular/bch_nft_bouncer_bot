@@ -66,7 +66,7 @@ export async function requestAddresses(telegramUserId: number): Promise<BchAddre
 export async function requestSignMessage(
   telegramUserId: number,
   message: string,
-  address: string
+  _address?: string  // Not used - wallet chooses signing address
 ): Promise<string> {
   const session = getUserSession(telegramUserId);
   if (!session) {
@@ -83,7 +83,7 @@ export async function requestSignMessage(
         method: 'bch_signMessage',
         params: {
           message,
-          address,
+          userPrompt: 'Sign to verify NFT ownership',
         },
       },
     });
