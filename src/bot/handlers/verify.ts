@@ -6,12 +6,15 @@ import {
   updateChallengeAddress,
   deleteChallenge,
   getPendingKicksForUser,
+  getPendingKick,
+  addPendingKick,
   deletePendingKick,
   addVerification,
   getVerification,
   getVerificationByNft,
   getNftCategories,
   getGroup,
+  isGroupConfigured,
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId } from '../../blockchain/nft.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
@@ -90,7 +93,13 @@ verifyHandlers.command('start', async (ctx: Context) => {
 // /verify - Start verification process
 verifyHandlers.command('verify', async (ctx: Context) => {
   if (ctx.chat?.type !== 'private') {
-    await ctx.reply('Please start verification in a private chat with me.');
+    // In a group, reply with the deeplink
+    const chatId = ctx.chat!.id;
+    const botUsername = ctx.me.username;
+    const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
+    await ctx.reply(
+      `🔐 To verify NFT ownership, click here:\n${deepLink}`,
+    );
     return;
   }
 
@@ -543,3 +552,57 @@ async function addUserToGroup(ctx: Context, userId: number, groupId: number): Pr
     );
   }
 }
+
+// Check group messages for unverified members (prompt once per user)
+verifyHandlers.on('message', async (ctx: Context, next) => {
+  // Only handle group messages
+  if (ctx.chat?.type === 'private') {
+    return next();
+  }
+
+  const userId = ctx.from?.id;
+  if (!userId) return next();
+
+  const chatId = ctx.chat!.id;
+
+  // Check if this group is configured for NFT gating
+  if (!isGroupConfigured(chatId)) {
+    return next();
+  }
+
+  // Check if user is already verified
+  const verification = getVerification(userId, chatId);
+  if (verification) {
+    return next();
+  }
+
+  // Check if we've already prompted this user (they're in pending_kicks)
+  const pending = getPendingKick(userId, chatId);
+  if (pending) {
+    return next();
+  }
+
+  // Check if user is admin (don't prompt admins)
+  try {
+    const member = await ctx.api.getChatMember(chatId, userId);
+    if (member.status === 'administrator' || member.status === 'creator') {
+      return next();
+    }
+  } catch {
+    // If we can't check, continue anyway
+  }
+
+  // First message from unverified member - prompt them once
+  addPendingKick(userId, chatId);
+
+  const botUsername = ctx.me.username;
+  const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
+  const username = ctx.from?.username ? `@${ctx.from.username}` : ctx.from?.first_name || 'there';
+
+  await ctx.reply(
+    `👋 Hey ${username}! This group requires NFT verification.\n\n` +
+    `Click here to verify: ${deepLink}`
+  );
+
+  return next();
+});

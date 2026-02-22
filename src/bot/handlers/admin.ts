@@ -44,6 +44,8 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
   upsertGroup(chatId, chatTitle);
 
   const configured = isGroupConfigured(chatId);
+  const botUsername = ctx.me.username;
+  const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
 
   await ctx.reply(
     `✅ Bot is set up for this group!\n\n` +
@@ -51,7 +53,9 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
     `ID: ${chatId}\n\n` +
     (configured
       ? 'NFT categories are already configured. Use /status to view them.'
-      : 'Next step: Add NFT categories with /add_category <category_id>')
+      : 'Next step: Add NFT categories with /add_category <category_id>') +
+    `\n\n**Verification link for existing members:**\n${deepLink}`,
+    { parse_mode: 'Markdown' }
   );
 });
 
