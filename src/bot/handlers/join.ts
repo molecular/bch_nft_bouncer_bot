@@ -10,16 +10,23 @@ export const joinHandlers = new Composer();
 
 // Handle new chat members
 joinHandlers.on('chat_member', async (ctx: Context) => {
+  console.log('[chat_member] Event received');
   const update = ctx.chatMember;
-  if (!update) return;
+  if (!update) {
+    console.log('[chat_member] No update data');
+    return;
+  }
 
   const { chat, new_chat_member, old_chat_member } = update;
+
+  console.log(`[chat_member] User ${new_chat_member.user.id}: ${old_chat_member.status} -> ${new_chat_member.status}`);
 
   // Only handle joins (status change to 'member' or 'restricted')
   const wasNotMember = ['left', 'kicked', 'banned'].includes(old_chat_member.status);
   const isNowMember = ['member', 'restricted', 'administrator', 'creator'].includes(new_chat_member.status);
 
   if (!wasNotMember || !isNowMember) {
+    console.log(`[chat_member] Skipping: wasNotMember=${wasNotMember}, isNowMember=${isNowMember}`);
     return;
   }
 
@@ -45,8 +52,32 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   // Check if user is already verified
   const verification = getVerification(userId, chatId);
   if (verification) {
-    console.log(`User ${userId} already verified for group ${chatId}`);
-    return; // Already verified, allow access
+    console.log(`User ${userId} already verified for group ${chatId}, ensuring unrestricted`);
+    // Make sure they're unrestricted (in case previous unrestriction failed)
+    try {
+      await ctx.api.restrictChatMember(chatId, userId, {
+        permissions: {
+          can_send_messages: true,
+          can_send_audios: true,
+          can_send_documents: true,
+          can_send_photos: true,
+          can_send_videos: true,
+          can_send_video_notes: true,
+          can_send_voice_notes: true,
+          can_send_polls: true,
+          can_send_other_messages: true,
+          can_add_web_page_previews: true,
+          can_change_info: true,
+          can_invite_users: true,
+          can_pin_messages: true,
+          can_manage_topics: true,
+        },
+      });
+      console.log(`User ${userId} unrestricted on rejoin`);
+    } catch (error: any) {
+      console.error(`Failed to unrestrict verified user ${userId}:`, error.message);
+    }
+    return;
   }
 
   // New unverified user - restrict until verified

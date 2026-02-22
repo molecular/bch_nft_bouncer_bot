@@ -680,8 +680,9 @@ verifyHandlers.command('cancel', async (ctx: Context) => {
 });
 
 async function addUserToGroup(ctx: Context, userId: number, groupId: number): Promise<void> {
+  console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
   try {
-    // Unrestrict user - restore full permissions
+    // Unrestrict user - restore full permissions (all ChatPermissions fields)
     await ctx.api.restrictChatMember(groupId, userId, {
       permissions: {
         can_send_messages: true,
@@ -694,15 +695,19 @@ async function addUserToGroup(ctx: Context, userId: number, groupId: number): Pr
         can_send_polls: true,
         can_send_other_messages: true,
         can_add_web_page_previews: true,
+        can_change_info: true,
         can_invite_users: true,
+        can_pin_messages: true,
+        can_manage_topics: true,
       },
     });
 
+    console.log(`[addUserToGroup] Successfully unrestricted user ${userId}`);
     await ctx.reply(
       `✅ You now have full access to the group!`
     );
-  } catch (error) {
-    console.error('Error unrestricting user:', error);
+  } catch (error: any) {
+    console.error(`[addUserToGroup] Error unrestricting user ${userId}:`, error.message);
     await ctx.reply(
       'Verification complete, but I couldn\'t update your permissions. Please ask a group admin.'
     );

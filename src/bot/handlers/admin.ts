@@ -53,7 +53,7 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
     `ID: ${chatId}\n\n` +
     (configured
       ? 'NFT categories are already configured. Use /status to view them.'
-      : 'Next step: Add NFT categories with /add_category <category_id>') +
+      : 'Next step: Add NFT categories with /add\\_category <category\\_id>') +
     `\n\n**Verification link for existing members:**\n${deepLink}`,
     { parse_mode: 'Markdown' }
   );
@@ -194,7 +194,7 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
       statusMsg += `${i + 1}. \`${cat}\`\n`;
     });
   } else {
-    statusMsg += '_No categories configured. Use /add_category to add one._';
+    statusMsg += '_No categories configured. Use /add\\_category to add one._';
   }
 
   await ctx.reply(statusMsg, { parse_mode: 'Markdown' });
@@ -298,15 +298,15 @@ adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(
     `🔧 **Admin Commands**\n\n` +
     `/setup - Initialize bot for this group\n` +
-    `/add_category <category> - Add NFT category for access\n` +
-    `/remove_category <category> - Remove NFT category\n` +
-    `/list_categories - List configured NFT categories\n` +
+    `/add\\_category <category> - Add NFT category for access\n` +
+    `/remove\\_category <category> - Remove NFT category\n` +
+    `/list\\_categories - List configured NFT categories\n` +
     `/status - Show full group configuration\n` +
     `/scan - Re-check all verified users now\n\n` +
     `**How it works:**\n` +
     `1. Add bot to group as admin\n` +
     `2. Run /setup to initialize\n` +
-    `3. Add NFT categories with /add_category\n` +
+    `3. Add NFT categories with /add\\_category\n` +
     `4. Enable "Hidden message history" in group settings\n` +
     `5. New members will be kicked and asked to verify NFT ownership via DM`,
     { parse_mode: 'Markdown' }
