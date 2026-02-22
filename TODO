@@ -1,1 +1,12 @@
  * delete verification message from group after user has verified
+ * remove walletconnect debug logging
+ * jonathan can't write after verification
+ * jonathan: after verification, it would be nice if it showed me what NFT it found.
+ * jonathan: also, now that I read closer, the "you can now rejoin the group. Use this link:" is also a bit weird - there's no link and am I supposed to log off from the group and on again?
+ * paytaca doesn't show the message to be signed?
+ * add bcmr lookup for nicer messaging (use token name instead of category id in user-facing messages)
+ * add "user verified" message to the group, maybe with an nft pic?
+
+IMPLEMENTED, BUT PENDING TEST
+
+	* jonathan was able to write to group and the write was not followed by the bot checking verification
