@@ -119,15 +119,14 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
       `Click to verify: ${deepLink}`
     );
 
-    // Also try to DM
+    // Also try to DM (no Markdown - bot username has underscores that break links)
     try {
       await ctx.api.sendMessage(
         userId,
         `👋 Hello ${username}!\n\n` +
-        `You joined **${group.name}**, which requires NFT verification.\n\n` +
+        `You joined "${group.name}", which requires NFT verification.\n\n` +
         `You can read messages but cannot post until verified.\n\n` +
-        `Click here to verify:\n${deepLink}`,
-        { parse_mode: 'Markdown' }
+        `Click here to verify:\n${deepLink}`
       );
     } catch (dmError: any) {
       console.log(`Could not DM user ${userId}:`, dmError.message);
