@@ -123,6 +123,36 @@ adminHandlers.command('removenft', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(`✅ NFT category removed (if it existed).`);
 });
 
+// /listnfts - List configured NFT categories
+adminHandlers.command('listnfts', requireGroupAdmin, async (ctx: Context) => {
+  if (ctx.chat?.type === 'private') {
+    await ctx.reply('This command must be used in a group.');
+    return;
+  }
+
+  const chatId = ctx.chat!.id;
+  const group = getGroup(chatId);
+
+  if (!group) {
+    await ctx.reply('This group is not set up. Run /setup first.');
+    return;
+  }
+
+  const categories = getNftCategories(chatId);
+
+  if (categories.length === 0) {
+    await ctx.reply('No NFT categories configured.\n\nUse /addnft <category_id> to add one.');
+    return;
+  }
+
+  let msg = `**NFT Categories (${categories.length}):**\n\n`;
+  categories.forEach((cat, i) => {
+    msg += `${i + 1}. \`${cat}\`\n`;
+  });
+
+  await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
 // /status - Show group configuration
 adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
   if (ctx.chat?.type === 'private') {
@@ -266,7 +296,8 @@ adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
     `/setup - Initialize bot for this group\n` +
     `/addnft <category> - Add NFT category for access\n` +
     `/removenft <category> - Remove NFT category\n` +
-    `/status - Show group configuration\n` +
+    `/listnfts - List configured NFT categories\n` +
+    `/status - Show full group configuration\n` +
     `/scan - Re-check all verified users now\n\n` +
     `**How it works:**\n` +
     `1. Add bot to group as admin\n` +
