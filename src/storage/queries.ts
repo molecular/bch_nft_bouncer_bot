@@ -49,15 +49,16 @@ export function isGroupConfigured(groupId: number): boolean {
 
 export function addVerification(
   telegramUserId: number,
+  telegramUsername: string | null,
   groupId: number,
   nftCategory: string,
   nftCommitment: string | null,
   bchAddress: string
 ): void {
   db.prepare(`
-    INSERT INTO verifications (telegram_user_id, group_id, nft_category, nft_commitment, bch_address)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(telegramUserId, groupId, nftCategory, nftCommitment, bchAddress);
+    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, nft_category, nft_commitment, bch_address)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(telegramUserId, telegramUsername, groupId, nftCategory, nftCommitment, bchAddress);
 }
 
 export function getVerification(

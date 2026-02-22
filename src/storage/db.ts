@@ -70,6 +70,13 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_pending_kicks_user ON pending_kicks(telegram_user_id);
   `);
 
+  // Migration: Add telegram_username column if it doesn't exist
+  const columns = db.prepare("PRAGMA table_info(verifications)").all() as { name: string }[];
+  if (!columns.some(col => col.name === 'telegram_username')) {
+    db.exec("ALTER TABLE verifications ADD COLUMN telegram_username TEXT");
+    console.log('Added telegram_username column to verifications table');
+  }
+
   console.log('Database initialized');
 }
 

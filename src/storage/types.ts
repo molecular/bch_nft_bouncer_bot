@@ -12,6 +12,7 @@ export interface GroupNftCategory {
 export interface Verification {
   id: number;
   telegram_user_id: number;
+  telegram_username: string | null;
   group_id: number;
   nft_category: string;
   nft_commitment: string | null;

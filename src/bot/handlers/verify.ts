@@ -310,7 +310,8 @@ async function handleWcVerification(
         }
 
         // Success! Store verification
-        addVerification(userId, state.groupId, nft.category, nft.commitment, address);
+        const username = ctx.from?.username || null;
+        addVerification(userId, username, state.groupId, nft.category, nft.commitment, address);
         deleteChallenge(challenge.id);
         deletePendingKick(userId, state.groupId);
 
@@ -475,7 +476,8 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
     const nft = ownedNfts[0];
 
     // Store verification
-    addVerification(userId, state.groupId, nft.category, nft.commitment, state.address);
+    const username = ctx.from?.username || null;
+    addVerification(userId, username, state.groupId, nft.category, nft.commitment, state.address);
     deleteChallenge(state.challenge.id);
     deletePendingKick(userId, state.groupId);
 
