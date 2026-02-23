@@ -39,7 +39,8 @@ export function initializeDatabase(): void {
       nft_commitment TEXT,              -- NFT commitment (for uniqueness)
       bch_address TEXT NOT NULL,        -- Address holding the NFT
       verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(nft_category, nft_commitment)  -- Each NFT can only verify one user
+      telegram_username TEXT,
+      UNIQUE(nft_category, nft_commitment, group_id)  -- Same NFT can verify same user in multiple groups
     );
 
     -- Pending verification challenges

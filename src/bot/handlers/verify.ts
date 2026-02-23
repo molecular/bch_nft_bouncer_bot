@@ -279,6 +279,18 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       return;
     }
 
+    // Re-check if NFT is still available (another user could have claimed it)
+    const existingBinding = getVerificationByNft(state.wcNft.category, state.wcNft.commitment, state.groupId);
+    if (existingBinding && existingBinding.telegram_user_id !== userId) {
+      await ctx.reply(
+        '❌ This NFT was claimed by another user while you were signing.\n\n' +
+        'Each NFT can only verify one Telegram account.'
+      );
+      await disconnectSession(userId);
+      verificationState.delete(userId);
+      return;
+    }
+
     // Success! Store verification
     const username = ctx.from?.username || null;
     addVerification(userId, username, state.groupId, state.wcNft.category, state.wcNft.commitment, state.address);
@@ -387,12 +399,12 @@ async function handleWcVerification(
 
         const nft = ownedNfts[0];
 
-        // Check if this NFT is already bound to another user
-        const existingBinding = getVerificationByNft(nft.category, nft.commitment);
+        // Check if this NFT is already bound to another user in this group
+        const existingBinding = getVerificationByNft(nft.category, nft.commitment, state.groupId);
         if (existingBinding && existingBinding.telegram_user_id !== userId) {
           await ctx.reply(
-            '❌ This NFT is already verified by another user.\n\n' +
-            'Each NFT can only verify one Telegram account.'
+            '❌ This NFT is already verified by another user in this group.\n\n' +
+            'Each NFT can only verify one Telegram account per group.'
           );
           await disconnectSession(userId);
           verificationState.delete(userId);
@@ -437,8 +449,7 @@ async function handleWcVerification(
 
         await ctx.reply(
           '✅ **Verification successful!**\n\n' +
-          `NFT: \`${nft.category.slice(0, 16)}...${nft.commitment ? ` (${nft.commitment.slice(0, 8)}...)` : ''}\`\n\n` +
-          'You can now rejoin the group. Use this link:',
+          `NFT: \`${nft.category.slice(0, 16)}...${nft.commitment ? ` (${nft.commitment.slice(0, 8)}...)` : ''}\``,
           { parse_mode: 'Markdown' }
         );
 
@@ -565,12 +576,12 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
 
       const nft = ownedNfts[0];
 
-      // Check if this NFT is already bound
-      const existingBinding = getVerificationByNft(nft.category, nft.commitment);
+      // Check if this NFT is already bound in this group
+      const existingBinding = getVerificationByNft(nft.category, nft.commitment, state.groupId);
       if (existingBinding && existingBinding.telegram_user_id !== userId) {
         await ctx.reply(
-          '❌ This NFT is already verified by another user.\n\n' +
-          'Each NFT can only verify one Telegram account.'
+          '❌ This NFT is already verified by another user in this group.\n\n' +
+          'Each NFT can only verify one Telegram account per group.'
         );
         return;
       }
@@ -649,8 +660,7 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
     await ctx.reply(
       '✅ **Verification successful!**\n\n' +
       `Address: \`${state.address.slice(12, 28)}...\`\n` +
-      `NFT: \`${nft.category.slice(0, 16)}...${nft.commitment ? ` (${nft.commitment.slice(0, 8)}...)` : ''}\`\n\n` +
-      'You can now rejoin the group!',
+      `NFT: \`${nft.category.slice(0, 16)}...${nft.commitment ? ` (${nft.commitment.slice(0, 8)}...)` : ''}\``,
       { parse_mode: 'Markdown' }
     );
 

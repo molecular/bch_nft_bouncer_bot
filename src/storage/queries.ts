@@ -72,16 +72,17 @@ export function getVerification(
 
 export function getVerificationByNft(
   nftCategory: string,
-  nftCommitment: string | null
+  nftCommitment: string | null,
+  groupId: number
 ): Verification | undefined {
   if (nftCommitment === null) {
     return db.prepare(`
-      SELECT * FROM verifications WHERE nft_category = ? AND nft_commitment IS NULL
-    `).get(nftCategory) as Verification | undefined;
+      SELECT * FROM verifications WHERE nft_category = ? AND nft_commitment IS NULL AND group_id = ?
+    `).get(nftCategory, groupId) as Verification | undefined;
   }
   return db.prepare(`
-    SELECT * FROM verifications WHERE nft_category = ? AND nft_commitment = ?
-  `).get(nftCategory, nftCommitment) as Verification | undefined;
+    SELECT * FROM verifications WHERE nft_category = ? AND nft_commitment = ? AND group_id = ?
+  `).get(nftCategory, nftCommitment, groupId) as Verification | undefined;
 }
 
 export function getVerificationsByAddress(bchAddress: string): Verification[] {
