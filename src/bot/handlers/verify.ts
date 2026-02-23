@@ -22,6 +22,7 @@ import { createPairing, getUserSession, disconnectSession, checkAndClearRejectio
 import { generateQRBuffer } from '../../walletconnect/qr.js';
 import { requestAddresses, requestSignMessage } from '../../walletconnect/sign.js';
 import { config } from '../../config.js';
+import { unrestrictUser } from '../utils/permissions.js';
 
 export const verifyHandlers = new Composer();
 
@@ -692,30 +693,23 @@ verifyHandlers.command('cancel', async (ctx: Context) => {
 async function addUserToGroup(ctx: Context, userId: number, groupId: number): Promise<void> {
   console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
   try {
-    // Unrestrict user - restore full permissions (all ChatPermissions fields)
-    await ctx.api.restrictChatMember(groupId, userId, {
-      permissions: {
-        can_send_messages: true,
-        can_send_audios: true,
-        can_send_documents: true,
-        can_send_photos: true,
-        can_send_videos: true,
-        can_send_video_notes: true,
-        can_send_voice_notes: true,
-        can_send_polls: true,
-        can_send_other_messages: true,
-        can_add_web_page_previews: true,
-        can_change_info: true,
-        can_invite_users: true,
-        can_pin_messages: true,
-        can_manage_topics: true,
-      },
-    });
-
+    await unrestrictUser(ctx.api, groupId, userId);
     console.log(`[addUserToGroup] Successfully unrestricted user ${userId}`);
-    await ctx.reply(
-      `✅ You now have full access to the group!`
-    );
+
+    // Try to get a link to the group
+    let groupLink = '';
+    try {
+      const chat = await ctx.api.getChat(groupId);
+      if ('username' in chat && chat.username) {
+        groupLink = `\n\nGo to group: https://t.me/${chat.username}`;
+      } else if ('invite_link' in chat && chat.invite_link) {
+        groupLink = `\n\nGo to group: ${chat.invite_link}`;
+      }
+    } catch {
+      // Ignore errors getting chat info
+    }
+
+    await ctx.reply(`✅ You now have full access to the group!${groupLink}`);
   } catch (error: any) {
     console.error(`[addUserToGroup] Error unrestricting user ${userId}:`, error.message);
     await ctx.reply(

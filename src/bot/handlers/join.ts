@@ -5,6 +5,7 @@ import {
   getVerification,
   addPendingKick,
 } from '../../storage/queries.js';
+import { restrictUser, unrestrictUser, unrestrictIfNeeded } from '../utils/permissions.js';
 
 export const joinHandlers = new Composer();
 
@@ -21,12 +22,14 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
 
   console.log(`[chat_member] User ${new_chat_member.user.id}: ${old_chat_member.status} -> ${new_chat_member.status}`);
 
-  // Only handle joins (status change to 'member' or 'restricted')
+  // Handle joins OR status becoming restricted (might be verified user who needs unrestriction)
   const wasNotMember = ['left', 'kicked', 'banned'].includes(old_chat_member.status);
   const isNowMember = ['member', 'restricted', 'administrator', 'creator'].includes(new_chat_member.status);
+  const becameRestricted = new_chat_member.status === 'restricted';
 
-  if (!wasNotMember || !isNowMember) {
-    console.log(`[chat_member] Skipping: wasNotMember=${wasNotMember}, isNowMember=${isNowMember}`);
+  // Process if: joining from outside, OR status changed to restricted (might need to fix verified user)
+  if (!((wasNotMember && isNowMember) || becameRestricted)) {
+    console.log(`[chat_member] Skipping: wasNotMember=${wasNotMember}, isNowMember=${isNowMember}, becameRestricted=${becameRestricted}`);
     return;
   }
 
@@ -53,26 +56,8 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   const verification = getVerification(userId, chatId);
   if (verification) {
     console.log(`User ${userId} already verified for group ${chatId}, ensuring unrestricted`);
-    // Make sure they're unrestricted (in case previous unrestriction failed)
     try {
-      await ctx.api.restrictChatMember(chatId, userId, {
-        permissions: {
-          can_send_messages: true,
-          can_send_audios: true,
-          can_send_documents: true,
-          can_send_photos: true,
-          can_send_videos: true,
-          can_send_video_notes: true,
-          can_send_voice_notes: true,
-          can_send_polls: true,
-          can_send_other_messages: true,
-          can_add_web_page_previews: true,
-          can_change_info: true,
-          can_invite_users: true,
-          can_pin_messages: true,
-          can_manage_topics: true,
-        },
-      });
+      await unrestrictUser(ctx.api, chatId, userId);
       console.log(`User ${userId} unrestricted on rejoin`);
     } catch (error: any) {
       console.error(`Failed to unrestrict verified user ${userId}:`, error.message);
@@ -92,21 +77,7 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
 
   try {
     // Restrict user - they can read but not post until verified
-    await ctx.api.restrictChatMember(chatId, userId, {
-      permissions: {
-        can_send_messages: false,
-        can_send_audios: false,
-        can_send_documents: false,
-        can_send_photos: false,
-        can_send_videos: false,
-        can_send_video_notes: false,
-        can_send_voice_notes: false,
-        can_send_polls: false,
-        can_send_other_messages: false,
-        can_add_web_page_previews: false,
-        can_invite_users: false,
-      },
-    });
+    await restrictUser(ctx.api, chatId, userId);
 
     // Track pending verification
     addPendingKick(userId, chatId);
@@ -182,6 +153,15 @@ joinHandlers.on('message', async (ctx: Context, next) => {
   // Check if user is verified
   const verification = getVerification(userId, chatId);
   if (verification) {
+    // User is verified - but check if they're still restricted (fallback fix)
+    try {
+      const wasRestricted = await unrestrictIfNeeded(ctx.api, chatId, userId);
+      if (wasRestricted) {
+        console.log(`[join] Unrestricted verified user ${userId}`);
+      }
+    } catch (error: any) {
+      console.error(`[join] Error unrestricting verified user ${userId}:`, error.message);
+    }
     return next(); // User is verified, allow message
   }
 
@@ -200,21 +180,7 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
 
     // Restrict user (in case they weren't already)
-    await ctx.api.restrictChatMember(chatId, userId, {
-      permissions: {
-        can_send_messages: false,
-        can_send_audios: false,
-        can_send_documents: false,
-        can_send_photos: false,
-        can_send_videos: false,
-        can_send_video_notes: false,
-        can_send_voice_notes: false,
-        can_send_polls: false,
-        can_send_other_messages: false,
-        can_add_web_page_previews: false,
-        can_invite_users: false,
-      },
-    });
+    await restrictUser(ctx.api, chatId, userId);
 
     // Track pending verification
     addPendingKick(userId, chatId);

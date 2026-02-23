@@ -17,7 +17,10 @@ Just add it to your group and configure your NFT categories.
 ### Setup
 
 1. **Add the bot** to your Telegram group as an administrator
-2. **Grant permissions**: The bot needs "Ban users" and "Restrict members" permissions
+2. **Grant permissions**: The bot needs these admin permissions:
+   - **Restrict members** - to mute unverified users
+   - **Ban users** - to kick users who no longer hold NFTs
+   - **Add new admins** - to unrestrict verified users (uses promote/demote cycle)
 3. **Run `/setup`** in your group to initialize
 4. **Add NFT categories** with `/add_category <category_id>`
    - The category ID is the 64-character hex transaction ID of the NFT genesis
