@@ -77,6 +77,12 @@ Want to run your own instance? See [README_build.md](README_build.md) for build 
 
 ---
 
+## Technical Notes
+
+- [Telegram API Quirks & Workarounds](README_quirks.md) - undocumented API behaviors and solutions
+
+---
+
 ## Links
 
 - [GitHub Repository](https://github.com/molecular/bch_nft_bouncer_bot)
