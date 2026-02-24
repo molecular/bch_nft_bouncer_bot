@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { config } from '../config.js';
-import type { Group, Verification, Challenge, PendingKick } from './types.js';
+import type { Group, Verification, Challenge, PendingKick, TokenMetadata } from './types.js';
 import crypto from 'crypto';
 
 // ============ Groups ============
@@ -205,4 +205,44 @@ export function getVerificationsForMonitoring(): Array<{
     nft_commitment: string | null;
     bch_address: string;
   }>;
+}
+
+// ============ Token Metadata ============
+
+export function getTokenMetadata(category: string): TokenMetadata | undefined {
+  return db.prepare('SELECT * FROM token_metadata WHERE category = ?')
+    .get(category) as TokenMetadata | undefined;
+}
+
+export function upsertTokenMetadata(
+  category: string,
+  name: string | null,
+  symbol: string | null,
+  description: string | null,
+  iconUri: string | null,
+  imageUri: string | null,
+  decimals: number | null
+): void {
+  db.prepare(`
+    INSERT INTO token_metadata (category, name, symbol, description, icon_uri, image_uri, decimals, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(category) DO UPDATE SET
+      name = excluded.name,
+      symbol = excluded.symbol,
+      description = excluded.description,
+      icon_uri = excluded.icon_uri,
+      image_uri = excluded.image_uri,
+      decimals = excluded.decimals,
+      fetched_at = excluded.fetched_at
+  `).run(category, name, symbol, description, iconUri, imageUri, decimals);
+}
+
+export function isTokenMetadataStale(category: string, maxAgeHours: number = 24): boolean {
+  const metadata = getTokenMetadata(category);
+  if (!metadata) return true;
+
+  const fetchedAt = new Date(metadata.fetched_at).getTime();
+  const now = Date.now();
+  const ageMs = now - fetchedAt;
+  return ageMs > maxAgeHours * 60 * 60 * 1000;
 }

@@ -4,8 +4,11 @@ import {
   isGroupConfigured,
   getVerification,
   addPendingKick,
+  getPendingKick,
+  getNftCategories,
 } from '../../storage/queries.js';
 import { restrictUser, unrestrictUser, unrestrictIfNeeded } from '../utils/permissions.js';
+import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
 
 export const joinHandlers = new Composer();
 
@@ -65,6 +68,13 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return;
   }
 
+  // Check if we've already prompted this user (avoid duplicate prompts when restriction triggers chat_member event)
+  const pending = getPendingKick(userId, chatId);
+  if (pending) {
+    console.log(`User ${userId} already in pending_kicks, skipping prompt`);
+    return;
+  }
+
   // New unverified user - restrict until verified
   console.log(`New unverified user ${userId} joined group ${chatId}, restricting...`);
 
@@ -82,11 +92,16 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     // Track pending verification
     addPendingKick(userId, chatId);
 
+    // Fetch categories and their metadata for display
+    const categories = getNftCategories(chatId);
+    const metadataResults = await Promise.all(categories.map(cat => fetchTokenMetadata(cat)));
+    const categoryList = categories.map((cat, i) => formatTokenName(cat, metadataResults[i])).join(', ');
+
     // Post message in group
     await ctx.api.sendMessage(
       chatId,
       `👋 ${username} - This group requires NFT verification.\n\n` +
-      `You can read messages but cannot post until verified.\n\n` +
+      `Accepted NFTs: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
 
@@ -96,7 +111,7 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
         userId,
         `👋 Hello ${username}!\n\n` +
         `You joined "${group.name}", which requires NFT verification.\n\n` +
-        `You can read messages but cannot post until verified.\n\n` +
+        `Accepted NFTs: ${categoryList}\n\n` +
         `Click here to verify:\n${deepLink}`
       );
     } catch (dmError: any) {
@@ -185,10 +200,16 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     // Track pending verification
     addPendingKick(userId, chatId);
 
+    // Fetch categories and their metadata for display
+    const categories = getNftCategories(chatId);
+    const metadataResults = await Promise.all(categories.map(cat => fetchTokenMetadata(cat)));
+    const categoryList = categories.map((cat, i) => formatTokenName(cat, metadataResults[i])).join(', ');
+
     // Notify in group
     await ctx.api.sendMessage(
       chatId,
       `⚠️ ${username} - You must verify NFT ownership before posting.\n\n` +
+      `Accepted NFTs: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
 

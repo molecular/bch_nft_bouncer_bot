@@ -11,6 +11,7 @@ import {
   deleteVerification,
 } from '../../storage/queries.js';
 import { isValidCategoryId, checkNftOwnership } from '../../blockchain/nft.js';
+import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
 
 export const adminHandlers = new Composer();
 
@@ -101,10 +102,16 @@ adminHandlers.command('add_category', requireGroupAdmin, async (ctx: Context) =>
 
   const categories = getNftCategories(chatId!);
 
+  // Fetch metadata for nice display
+  const metadata = await fetchTokenMetadata(category);
+  const displayName = formatTokenName(category, metadata);
+
   await ctx.reply(
     `✅ NFT category added!\n\n` +
-    `Category: ${category}\n\n` +
-    `This group now accepts ${categories.length} NFT categor${categories.length === 1 ? 'y' : 'ies'} for verification.`
+    `Token: ${displayName}\n` +
+    `Category: \`${category}\`\n\n` +
+    `This group now accepts ${categories.length} NFT categor${categories.length === 1 ? 'y' : 'ies'} for verification.`,
+    { parse_mode: 'Markdown' }
   );
 });
 
@@ -151,9 +158,15 @@ adminHandlers.command('list_categories', requireGroupAdmin, async (ctx: Context)
     return;
   }
 
+  // Fetch metadata for all categories
+  const metadataPromises = categories.map(cat => fetchTokenMetadata(cat));
+  const metadataResults = await Promise.all(metadataPromises);
+
   let msg = `**NFT Categories (${categories.length}):**\n\n`;
   categories.forEach((cat, i) => {
-    msg += `${i + 1}. \`${cat}\`\n`;
+    const displayName = formatTokenName(cat, metadataResults[i]);
+    msg += `${i + 1}. ${displayName}\n`;
+    msg += `   \`${cat}\`\n\n`;
   });
 
   await ctx.reply(msg, { parse_mode: 'Markdown' });
@@ -192,8 +205,13 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
 
   statusMsg += `**NFT Categories:** ${categories.length}\n`;
   if (categories.length > 0) {
+    // Fetch metadata for all categories
+    const metadataPromises = categories.map(cat => fetchTokenMetadata(cat));
+    const metadataResults = await Promise.all(metadataPromises);
+
     categories.forEach((cat, i) => {
-      statusMsg += `${i + 1}. \`${cat}\`\n`;
+      const displayName = formatTokenName(cat, metadataResults[i]);
+      statusMsg += `${i + 1}. ${displayName}\n`;
     });
   } else {
     statusMsg += '_No categories configured. Use /add\\_category to add one._';

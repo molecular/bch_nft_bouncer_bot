@@ -17,6 +17,7 @@ import {
   isGroupConfigured,
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId } from '../../blockchain/nft.js';
+import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
@@ -164,11 +165,17 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     groupName: group.name || `Group ${groupId}`,
   });
 
+  // Fetch metadata for all categories (in parallel)
+  const metadataPromises = categories.map(cat => fetchTokenMetadata(cat));
+  const metadataResults = await Promise.all(metadataPromises);
+
   // Offer both verification methods
   let msg = `🔐 **Verification for ${group.name}**\n\n`;
-  msg += `To verify, I need to confirm you own an NFT from one of these categories:\n`;
-  categories.forEach(cat => {
-    msg += `• \`${cat.slice(0, 16)}...${cat.slice(-8)}\`\n`;
+  msg += `To verify, I need to confirm you own an NFT from one of these collections:\n`;
+  categories.forEach((cat, i) => {
+    const metadata = metadataResults[i];
+    const displayName = formatTokenName(cat, metadata);
+    msg += `• ${displayName}\n`;
   });
 
   msg += `\n**Choose verification method:**\n\n`;
@@ -300,9 +307,13 @@ verifyHandlers.command('sign', async (ctx: Context) => {
     }
     deletePendingKick(userId, state.groupId);
 
+    // Fetch metadata for nice display
+    const metadata = await fetchTokenMetadata(state.wcNft.category);
+    const nftDisplay = formatNftDisplay(state.wcNft.category, state.wcNft.commitment, metadata);
+
     await ctx.reply(
       '✅ **Verification successful!**\n\n' +
-      `NFT: \`${state.wcNft.category.slice(0, 16)}...${state.wcNft.commitment ? ` (${state.wcNft.commitment.slice(0, 8)}...)` : ''}\`\n\n` +
+      `NFT: ${nftDisplay}\n\n` +
       'You now have full access to the group!',
       { parse_mode: 'Markdown' }
     );
@@ -448,9 +459,13 @@ async function handleWcVerification(
         deleteChallenge(challenge.id);
         deletePendingKick(userId, state.groupId);
 
+        // Fetch metadata for nice display
+        const nftMetadata = await fetchTokenMetadata(nft.category);
+        const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
+
         await ctx.reply(
           '✅ **Verification successful!**\n\n' +
-          `NFT: \`${nft.category.slice(0, 16)}...${nft.commitment ? ` (${nft.commitment.slice(0, 8)}...)` : ''}\``,
+          `NFT: ${nftDisplay}`,
           { parse_mode: 'Markdown' }
         );
 
@@ -600,8 +615,13 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
       state.challengeMessage = challengeMessage;
       state.address = address;
 
+      // Fetch metadata for nice display
+      const nftMetadata = await fetchTokenMetadata(nft.category);
+      const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
+
       await ctx.reply(
-        `✅ NFT found! Now I need to verify you own this address.\n\n` +
+        `✅ NFT found: ${nftDisplay}\n\n` +
+        `Now I need to verify you own this address.\n\n` +
         `**Sign this message in your wallet:**\n\n` +
         `\`\`\`\n${challengeMessage}\n\`\`\`\n\n` +
         `In Electron Cash: Tools → Sign/verify message\n\n` +
@@ -658,10 +678,13 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
     deleteChallenge(state.challenge.id);
     deletePendingKick(userId, state.groupId);
 
+    // Fetch metadata for nice display
+    const nftMetadata = await fetchTokenMetadata(nft.category);
+    const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
+
     await ctx.reply(
       '✅ **Verification successful!**\n\n' +
-      `Address: \`${state.address.slice(12, 28)}...\`\n` +
-      `NFT: \`${nft.category.slice(0, 16)}...${nft.commitment ? ` (${nft.commitment.slice(0, 8)}...)` : ''}\``,
+      `NFT: ${nftDisplay}`,
       { parse_mode: 'Markdown' }
     );
 

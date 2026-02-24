@@ -36,3 +36,14 @@ export interface PendingKick {
   group_id: number;
   kicked_at: string;
 }
+
+export interface TokenMetadata {
+  category: string;
+  name: string | null;
+  symbol: string | null;
+  description: string | null;
+  icon_uri: string | null;
+  image_uri: string | null;
+  decimals: number | null;
+  fetched_at: string;
+}

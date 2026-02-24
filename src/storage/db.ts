@@ -63,6 +63,18 @@ export function initializeDatabase(): void {
       UNIQUE(telegram_user_id, group_id)
     );
 
+    -- Token metadata cache (BCMR)
+    CREATE TABLE IF NOT EXISTS token_metadata (
+      category TEXT PRIMARY KEY,
+      name TEXT,
+      symbol TEXT,
+      description TEXT,
+      icon_uri TEXT,
+      image_uri TEXT,
+      decimals INTEGER,
+      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Create indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_verifications_user ON verifications(telegram_user_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_group ON verifications(group_id);
