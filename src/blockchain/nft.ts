@@ -62,6 +62,8 @@ export async function checkNftOwnership(
 ): Promise<OwnedNft[]> {
   const tokenUtxos = await getTokenUtxos(address);
 
+  console.log(`[nft] checkNftOwnership: address=${address.slice(0, 30)}..., got ${tokenUtxos.length} token UTXOs, checking against ${categories.length} categories`);
+
   const ownedNfts: OwnedNft[] = [];
 
   for (const utxo of tokenUtxos) {

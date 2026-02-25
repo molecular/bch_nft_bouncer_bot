@@ -94,6 +94,16 @@ export function deleteVerification(id: number): void {
   db.prepare('DELETE FROM verifications WHERE id = ?').run(id);
 }
 
+export function updateVerificationNft(
+  id: number,
+  nftCategory: string,
+  nftCommitment: string | null
+): void {
+  db.prepare(`
+    UPDATE verifications SET nft_category = ?, nft_commitment = ? WHERE id = ?
+  `).run(nftCategory, nftCommitment, id);
+}
+
 export function deleteVerificationsByUser(telegramUserId: number, groupId?: number): void {
   if (groupId !== undefined) {
     db.prepare('DELETE FROM verifications WHERE telegram_user_id = ? AND group_id = ?')
