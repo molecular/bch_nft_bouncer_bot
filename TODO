@@ -1,13 +1,14 @@
 = BUGS/PROBLEMS/FEATURE REQUESTS
 
  * delete verification message from group after user has verified
- * remove walletconnect debug logging (keep for now - still testing)
+ * remove walletconnect debug logging
+ * jonathan: after verification, it would be nice if it showed me what NFT it found.
+ * add bcmr lookup for nicer messaging (use token name instead of category id in user-facing messages)
  * add "user verified" message to the group, maybe with an nft pic?
-
-= IMPLEMENTED
-
- * bcmr lookup for nicer messaging (token name instead of category id)
- * show user what NFT was found during verification
+ * /list_categories should be available to users
+ * consider a /list_verifications command, maybe at in the bot chat rather than the group?
+ * remove_category should accept category names (symbol? or whatever we display) instead of only the long hex id
+ 
  
 = IMPLEMENTED, BUT PENDING TEST
 
