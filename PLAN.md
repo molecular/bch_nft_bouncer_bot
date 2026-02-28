@@ -166,6 +166,40 @@ nft_entry_bot/
 - [x] Display token names instead of category IDs in all user-facing messages
 - [x] Graceful fallback to truncated category ID if no metadata
 
+### Phase 6.6 (Future): Pending Verifications & Simplified Condition Checking
+Allow users to verify their address before acquiring a qualifying asset. When the asset arrives, auto-activate and grant access.
+
+**Simplified approach:**
+- Verification = proof that user owns address, for a specific group
+- Don't store *which* specific NFT satisfies rules - evaluate dynamically
+- On any change (address tx, group rules change), re-evaluate all affected verifications
+- Access granted if address meets ALL current conditions for group
+
+**Schema:**
+- Add `status` column to `verifications` table: 'pending' | 'active'
+- `nft_category`/`nft_commitment` become optional (legacy, or remove entirely)
+- Core record is just: telegram_user_id + group_id + bch_address + status
+
+**Implementation:**
+- [ ] Add migration for `status` column (default 'active' for existing records)
+- [ ] Make nft_category/nft_commitment nullable
+- [ ] Modify verification flow: if no qualifying asset, store as pending instead of rejecting
+- [ ] Add pending addresses to monitor subscriptions
+- [ ] On address change: re-evaluate all verifications for that address
+- [ ] On group rules change: re-evaluate all verifications for that group
+- [ ] If newly qualifies: update status='active', unrestrict user, notify via DM
+- [ ] If no longer qualifies: update status='pending' (or kick, depending on policy)
+- [ ] Consider expiration for pending verifications (optional)
+
+**Announcements:**
+- Can still show NFT pic in group announcement (Phase 10) - we query the address at verification time
+- Just don't persist which specific NFT was used
+
+**Benefits:**
+- Multiple conditions (NFT AND BCH balance) work naturally
+- Rules can change without migrating verification records
+- Simpler logic - no "auto-switch NFT" tracking needed
+
 ### Phase 7 (Future): Lobby Model
 - [ ] Public lobby for discovery
 - [ ] Route verified users to appropriate private groups
@@ -191,10 +225,23 @@ nft_entry_bot/
 - [ ] Periodic refresh for stale images
 
 ### Phase 11 (Future): Balance Threshold Gating
-- [ ] Support gating by BCH balance (e.g., "21 BCH club")
-- [ ] Configure minimum balance per group
+Support gating by asset balances instead of (or in addition to) NFT ownership.
+
+**Asset types:**
+- BCH balance (e.g., "21 BCH club")
+- Fungible CashToken balance (e.g., "hold 1000 FURU tokens")
+
+**Multiple conditions:**
+- Group can require multiple rules (e.g., NFT AND 1 BCH AND 1000 FURU)
+- User must satisfy ALL rules for access
+- Phase 6.6's dynamic re-evaluation handles this naturally
+
+**Implementation:**
+- [ ] Evolve `group_nft_categories` to `group_access_rules` with rule types
+- [ ] Rule types: 'nft' (category), 'fungible_token' (category + min amount), 'bch_balance' (min amount)
+- [ ] Multiple rules per group, all must be satisfied
 - [ ] Address subscriptions already watch all transactions, not just tokens
-- [ ] Check balance on address change notification
+- [ ] Re-evaluate on any address change (unified with Phase 6.6 logic)
 
 ## Key Dependencies
 ```json
