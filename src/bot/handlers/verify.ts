@@ -24,6 +24,7 @@ import { generateQRBuffer } from '../../walletconnect/qr.js';
 import { requestAddresses, requestSignMessage } from '../../walletconnect/sign.js';
 import { config } from '../../config.js';
 import { unrestrictUser } from '../utils/permissions.js';
+import { addAddressToMonitor } from '../../blockchain/monitor.js';
 
 export const verifyHandlers = new Composer();
 
@@ -302,6 +303,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
     // Success! Store verification
     const username = ctx.from?.username || null;
     addVerification(userId, username, state.groupId, state.wcNft.category, state.wcNft.commitment, state.address);
+    addAddressToMonitor(state.address); // Start monitoring this address
     if (state.challenge) {
       deleteChallenge(state.challenge.id);
     }
@@ -456,6 +458,7 @@ async function handleWcVerification(
         // Success! Store verification
         const username = ctx.from?.username || null;
         addVerification(userId, username, state.groupId, nft.category, nft.commitment, address);
+        addAddressToMonitor(address); // Start monitoring this address
         deleteChallenge(challenge.id);
         deletePendingKick(userId, state.groupId);
 
@@ -675,6 +678,7 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
     // Store verification
     const username = ctx.from?.username || null;
     addVerification(userId, username, state.groupId, nft.category, nft.commitment, state.address);
+    addAddressToMonitor(state.address); // Start monitoring this address
     deleteChallenge(state.challenge.id);
     deletePendingKick(userId, state.groupId);
 

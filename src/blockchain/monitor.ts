@@ -1,18 +1,26 @@
 import { getProvider } from './wallet.js';
 import { isNftAtAddress, checkNftOwnership } from './nft.js';
-import { getVerificationsForMonitoring, deleteVerification, updateVerificationNft, getNftCategories, getGroup } from '../storage/queries.js';
+import { getVerificationsForMonitoring, deleteVerification, updateVerificationNft, getNftCategories, getGroup, getAllVerifiedAddresses } from '../storage/queries.js';
 import type { Bot } from 'grammy';
 
-let monitoringInterval: ReturnType<typeof setInterval> | null = null;
 let botInstance: Bot | null = null;
 
-const MONITOR_INTERVAL_MS = 60_000; // Check every minute
+// Track address subscriptions: address -> cancel function
+const addressSubscriptions = new Map<string, () => void>();
+
+// Track when each address was added (to ignore notifications in first few seconds)
+const addressAddedTimes = new Map<string, number>();
+
+// Track addresses currently being processed (to avoid duplicate work from broadcast)
+const processingAddresses = new Set<string>();
+
+const SUBSCRIPTION_WARMUP_MS = 3000; // Ignore notifications for 3 seconds after subscribing
 
 /**
  * Start monitoring verified addresses for NFT transfers
  */
-export function startMonitoring(bot: Bot): void {
-  if (monitoringInterval) {
+export async function startMonitoring(bot: Bot): Promise<void> {
+  if (botInstance) {
     console.log('Monitoring already running');
     return;
   }
@@ -21,23 +29,144 @@ export function startMonitoring(bot: Bot): void {
 
   console.log('Starting NFT transfer monitoring...');
 
-  // Run immediately on start
-  checkAllVerifications();
+  // Set up single subscription handler for all addresses
+  await setupSubscriptionHandler();
 
-  // Then run periodically
-  monitoringInterval = setInterval(checkAllVerifications, MONITOR_INTERVAL_MS);
+  // Add all existing verified addresses to monitoring
+  const addresses = getAllVerifiedAddresses();
+  console.log(`[monitor] Adding ${addresses.length} addresses to monitor`);
+  for (const address of addresses) {
+    addAddressToMonitor(address);
+  }
+
+  // Run once on startup to catch anything missed while bot was down
+  checkAllVerifications();
 }
 
 /**
  * Stop monitoring
  */
 export function stopMonitoring(): void {
-  if (monitoringInterval) {
-    clearInterval(monitoringInterval);
-    monitoringInterval = null;
+  // Cancel the single subscription
+  if (subscriptionCancel) {
+    try {
+      subscriptionCancel();
+    } catch (e) {
+      // Ignore cancellation errors
+    }
+    subscriptionCancel = null;
   }
+  monitoredAddresses.clear();
+  addressAddedTimes.clear();
+
   botInstance = null;
   console.log('NFT monitoring stopped');
+}
+
+/**
+ * Set up the single subscription handler.
+ * Electrum broadcasts all notifications to all subscribers, so we only need one handler.
+ * We pick an arbitrary address to subscribe to - the handler will receive all notifications.
+ */
+async function setupSubscriptionHandler(): Promise<void> {
+  if (subscriptionCancel) {
+    return; // Already set up
+  }
+
+  try {
+    const provider = await getProvider();
+
+    // Subscribe to a placeholder address - we'll receive ALL notifications regardless
+    // We use any verified address, or a dummy one if none exist yet
+    const addresses = getAllVerifiedAddresses();
+    const subscribeAddress = addresses[0] || 'bitcoincash:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5cjkw02';
+
+    subscriptionCancel = await provider.subscribeToAddress(subscribeAddress, async (status: any) => {
+      // Status is [changedAddress, statusHash]
+      const changedAddress = Array.isArray(status) ? status[0] : null;
+      if (!changedAddress) {
+        return;
+      }
+
+      // Only process if this is an address we're monitoring
+      if (!monitoredAddresses.has(changedAddress)) {
+        return;
+      }
+
+      // Ignore notifications during warmup period for this address
+      const addedTime = addressAddedTimes.get(changedAddress) || 0;
+      if (Date.now() - addedTime < SUBSCRIPTION_WARMUP_MS) {
+        return;
+      }
+
+      console.log(`[monitor] Address change: ${changedAddress.slice(0, 25)}...`);
+
+      // Check all verifications for this address
+      await checkAddressVerifications(changedAddress);
+    });
+
+    console.log('[monitor] Subscription handler set up');
+  } catch (error) {
+    console.error('[monitor] Failed to set up subscription handler:', error);
+  }
+}
+
+/**
+ * Add an address to the monitoring set
+ */
+export function addAddressToMonitor(address: string): void {
+  if (monitoredAddresses.has(address)) {
+    return; // Already monitoring
+  }
+
+  monitoredAddresses.add(address);
+  addressAddedTimes.set(address, Date.now());
+  console.log(`[monitor] Now monitoring ${address.slice(0, 25)}... (${monitoredAddresses.size} total)`);
+}
+
+/**
+ * Remove an address from monitoring (when no longer needed)
+ */
+export function removeAddressFromMonitor(address: string): void {
+  if (monitoredAddresses.has(address)) {
+    monitoredAddresses.delete(address);
+    addressAddedTimes.delete(address);
+    console.log(`[monitor] Stopped monitoring ${address.slice(0, 25)}... (${monitoredAddresses.size} remaining)`);
+  }
+}
+
+/**
+ * Check all verifications for a specific address (triggered by subscription)
+ */
+async function checkAddressVerifications(address: string): Promise<void> {
+  const verifications = getVerificationsForMonitoring().filter(
+    v => v.bch_address === address
+  );
+
+  for (const verification of verifications) {
+    try {
+      const categories = getNftCategories(verification.group_id);
+      const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
+
+      if (ownedNfts.length === 0) {
+        console.log(`[subscription] User ${verification.telegram_user_id} lost all qualifying NFTs - will kick`);
+        await handleNftTransferred(verification);
+      } else {
+        const currentNftStillValid = ownedNfts.some(
+          nft => nft.category.toLowerCase() === verification.nft_category.toLowerCase() &&
+                 nft.commitment === verification.nft_commitment
+        );
+
+        if (!currentNftStillValid) {
+          const newNft = ownedNfts[0];
+          console.log(`[subscription] User ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...`);
+          updateVerificationNft(verification.id, newNft.category, newNft.commitment);
+        }
+      }
+    } catch (error) {
+      console.error(`[subscription] Error checking verification ${verification.id}:`, error);
+    }
+  }
 }
 
 /**
@@ -65,17 +194,13 @@ async function checkAllVerifications(): Promise<void> {
       // Get all qualifying categories for this group
       const categories = getNftCategories(verification.group_id);
 
-      console.log(`[monitor] Checking user ${verification.telegram_user_id}, address: ${verification.bch_address.slice(0, 30)}..., categories: ${categories.length}`);
-
       // Check if user still holds ANY qualifying NFT (not just the original one)
       const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
-
-      console.log(`[monitor] Found ${ownedNfts.length} NFTs for user ${verification.telegram_user_id}: ${JSON.stringify(ownedNfts.map(n => n.category.slice(0, 8) + '...' + (n.commitment || 'null')))}`);
 
       if (ownedNfts.length === 0) {
         invalid++;
         console.log(
-          `[monitor] NO qualifying NFTs at address ${verification.bch_address} for user ${verification.telegram_user_id} - will kick`
+          `[monitor] User ${verification.telegram_user_id} has no qualifying NFTs - will kick`
         );
 
         await handleNftTransferred(verification);
@@ -90,7 +215,7 @@ async function checkAllVerifications(): Promise<void> {
           // Original NFT is gone, but user has another qualifying NFT - auto-switch
           const newNft = ownedNfts[0];
           console.log(
-            `[monitor] User ${verification.telegram_user_id} original NFT gone, switching to ${newNft.category.slice(0, 8)}...${newNft.commitment || 'null'}`
+            `[monitor] User ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...${newNft.commitment || 'null'}`
           );
           updateVerificationNft(verification.id, newNft.category, newNft.commitment);
           switched++;
@@ -210,4 +335,60 @@ export async function checkUserVerification(
   );
 
   return stillHoldsNft;
+}
+
+/**
+ * Check all verifications for a specific group (e.g., after category removal)
+ */
+export async function checkGroupVerifications(groupId: number): Promise<{
+  checked: number;
+  valid: number;
+  invalid: number;
+  switched: number;
+}> {
+  const verifications = getVerificationsForMonitoring().filter(
+    v => v.group_id === groupId
+  );
+
+  let valid = 0;
+  let invalid = 0;
+  let switched = 0;
+
+  for (const verification of verifications) {
+    try {
+      const categories = getNftCategories(verification.group_id);
+
+      // If no categories left, all verifications are invalid
+      if (categories.length === 0) {
+        invalid++;
+        await handleNftTransferred(verification);
+        continue;
+      }
+
+      const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
+
+      if (ownedNfts.length === 0) {
+        invalid++;
+        console.log(`[monitor] Group check: user ${verification.telegram_user_id} has no qualifying NFTs - will kick`);
+        await handleNftTransferred(verification);
+      } else {
+        const currentNftStillValid = ownedNfts.some(
+          nft => nft.category.toLowerCase() === verification.nft_category.toLowerCase() &&
+                 nft.commitment === verification.nft_commitment
+        );
+
+        if (!currentNftStillValid) {
+          const newNft = ownedNfts[0];
+          console.log(`[monitor] Group check: user ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...`);
+          updateVerificationNft(verification.id, newNft.category, newNft.commitment);
+          switched++;
+        }
+        valid++;
+      }
+    } catch (error) {
+      console.error(`[monitor] Error checking verification ${verification.id}:`, error);
+    }
+  }
+
+  return { checked: verifications.length, valid, invalid, switched };
 }

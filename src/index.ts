@@ -40,8 +40,8 @@ async function main(): Promise<void> {
   // Create and start bot
   const bot = createBot();
 
-  // Start NFT transfer monitoring
-  startMonitoring(bot);
+  // Start NFT transfer monitoring (with address subscriptions)
+  await startMonitoring(bot);
   console.log('✅ NFT monitoring started');
 
   // Periodic cleanup of expired challenges

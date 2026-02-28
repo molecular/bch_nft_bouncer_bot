@@ -12,6 +12,7 @@ import {
 } from '../../storage/queries.js';
 import { isValidCategoryId, checkNftOwnership } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
+import { checkGroupVerifications } from '../../blockchain/monitor.js';
 
 export const adminHandlers = new Composer();
 
@@ -133,7 +134,21 @@ adminHandlers.command('remove_category', requireGroupAdmin, async (ctx: Context)
   const category = args.trim().toLowerCase();
   removeNftCategory(chatId!, category);
 
-  await ctx.reply(`✅ NFT category removed (if it existed).`);
+  await ctx.reply(`✅ NFT category removed. Checking affected verifications...`);
+
+  // Immediately check all verifications for this group
+  const result = await checkGroupVerifications(chatId!);
+
+  if (result.checked === 0) {
+    await ctx.reply(`No verifications to check.`);
+  } else {
+    let msg = `Verification check complete:\n`;
+    msg += `• Checked: ${result.checked}\n`;
+    msg += `• Valid: ${result.valid}\n`;
+    if (result.switched > 0) msg += `• Switched to different NFT: ${result.switched}\n`;
+    if (result.invalid > 0) msg += `• Removed (no qualifying NFT): ${result.invalid}`;
+    await ctx.reply(msg);
+  }
 });
 
 // /list_categories - List configured NFT categories
