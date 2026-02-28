@@ -1,18 +1,19 @@
 import { getProvider } from './wallet.js';
 import { isNftAtAddress, checkNftOwnership } from './nft.js';
-import { getVerificationsForMonitoring, deleteVerification, updateVerificationNft, getNftCategories, getGroup, getAllVerifiedAddresses } from '../storage/queries.js';
+import { getVerificationsForMonitoring, deleteVerification, updateVerificationNft, updateVerificationStatus, getNftCategories, getGroup, getAllVerifiedAddresses, getPendingVerificationsByAddress, deletePendingKick } from '../storage/queries.js';
+import { unrestrictUser } from '../bot/utils/permissions.js';
 import type { Bot } from 'grammy';
 
 let botInstance: Bot | null = null;
 
-// Track address subscriptions: address -> cancel function
-const addressSubscriptions = new Map<string, () => void>();
+// Single subscription cancel function
+let subscriptionCancel: (() => void) | null = null;
+
+// Set of addresses we're monitoring
+const monitoredAddresses = new Set<string>();
 
 // Track when each address was added (to ignore notifications in first few seconds)
 const addressAddedTimes = new Map<string, number>();
-
-// Track addresses currently being processed (to avoid duplicate work from broadcast)
-const processingAddresses = new Set<string>();
 
 const SUBSCRIPTION_WARMUP_MS = 3000; // Ignore notifications for 3 seconds after subscribing
 
@@ -148,24 +149,82 @@ async function checkAddressVerifications(address: string): Promise<void> {
       const categories = getNftCategories(verification.group_id);
       const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
 
-      if (ownedNfts.length === 0) {
-        console.log(`[subscription] User ${verification.telegram_user_id} lost all qualifying NFTs - will kick`);
-        await handleNftTransferred(verification);
+      if (verification.status === 'pending') {
+        // Pending verification - check if now qualifies
+        if (ownedNfts.length > 0) {
+          const nft = ownedNfts[0];
+          console.log(`[subscription] Pending user ${verification.telegram_user_id} now has NFT - activating!`);
+          await activatePendingVerification(verification, nft.category, nft.commitment);
+        }
+        // If still no NFT, remain pending (no action needed)
       } else {
-        const currentNftStillValid = ownedNfts.some(
-          nft => nft.category.toLowerCase() === verification.nft_category.toLowerCase() &&
-                 nft.commitment === verification.nft_commitment
-        );
+        // Active verification - check if still qualifies
+        if (ownedNfts.length === 0) {
+          console.log(`[subscription] User ${verification.telegram_user_id} lost all qualifying NFTs - will kick`);
+          await handleNftTransferred(verification);
+        } else if (verification.nft_category) {
+          const currentNftStillValid = ownedNfts.some(
+            nft => nft.category.toLowerCase() === verification.nft_category!.toLowerCase() &&
+                   nft.commitment === verification.nft_commitment
+          );
 
-        if (!currentNftStillValid) {
-          const newNft = ownedNfts[0];
-          console.log(`[subscription] User ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...`);
-          updateVerificationNft(verification.id, newNft.category, newNft.commitment);
+          if (!currentNftStillValid) {
+            const newNft = ownedNfts[0];
+            console.log(`[subscription] User ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...`);
+            updateVerificationNft(verification.id, newNft.category, newNft.commitment);
+          }
         }
       }
     } catch (error) {
       console.error(`[subscription] Error checking verification ${verification.id}:`, error);
     }
+  }
+}
+
+/**
+ * Activate a pending verification when user acquires qualifying NFT
+ */
+async function activatePendingVerification(
+  verification: { id: number; telegram_user_id: number; group_id: number; bch_address: string },
+  nftCategory: string,
+  nftCommitment: string | null
+): Promise<void> {
+  if (!botInstance) {
+    console.error('Bot instance not available for activating pending verification');
+    return;
+  }
+
+  try {
+    // Update verification to active with NFT details
+    updateVerificationStatus(verification.id, 'active', nftCategory, nftCommitment);
+
+    // Remove from pending kicks
+    deletePendingKick(verification.telegram_user_id, verification.group_id);
+
+    // Unrestrict user in group
+    await unrestrictUser(botInstance.api, verification.group_id, verification.telegram_user_id);
+
+    console.log(`[monitor] Activated pending verification for user ${verification.telegram_user_id} in group ${verification.group_id}`);
+
+    // Notify user via DM
+    try {
+      const group = getGroup(verification.group_id);
+      const groupName = group?.name || `Group ${verification.group_id}`;
+
+      await botInstance.api.sendMessage(
+        verification.telegram_user_id,
+        `🎉 **Great news!**\n\n` +
+        `Your address received a qualifying NFT!\n\n` +
+        `You now have full access to **${groupName}**.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (dmError) {
+      // User may have blocked the bot
+      console.log('Could not DM user about activation:', dmError);
+    }
+
+  } catch (error) {
+    console.error(`Error activating pending verification ${verification.id}:`, error);
   }
 }
 
@@ -183,6 +242,8 @@ async function checkAllVerifications(): Promise<void> {
   let valid = 0;
   let invalid = 0;
   let switched = 0;
+  let activated = 0;
+  let pending = 0;
   let errors = 0;
   const groupCounts = new Map<number, number>();
 
@@ -194,33 +255,49 @@ async function checkAllVerifications(): Promise<void> {
       // Get all qualifying categories for this group
       const categories = getNftCategories(verification.group_id);
 
-      // Check if user still holds ANY qualifying NFT (not just the original one)
+      // Check if user holds ANY qualifying NFT
       const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
 
-      if (ownedNfts.length === 0) {
-        invalid++;
-        console.log(
-          `[monitor] User ${verification.telegram_user_id} has no qualifying NFTs - will kick`
-        );
-
-        await handleNftTransferred(verification);
-      } else {
-        // Check if we need to switch to a different NFT
-        const currentNftStillValid = ownedNfts.some(
-          nft => nft.category.toLowerCase() === verification.nft_category.toLowerCase() &&
-                 nft.commitment === verification.nft_commitment
-        );
-
-        if (!currentNftStillValid) {
-          // Original NFT is gone, but user has another qualifying NFT - auto-switch
-          const newNft = ownedNfts[0];
-          console.log(
-            `[monitor] User ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...${newNft.commitment || 'null'}`
-          );
-          updateVerificationNft(verification.id, newNft.category, newNft.commitment);
-          switched++;
+      if (verification.status === 'pending') {
+        // Pending verification
+        if (ownedNfts.length > 0) {
+          // Now has NFT - activate!
+          const nft = ownedNfts[0];
+          await activatePendingVerification(verification, nft.category, nft.commitment);
+          activated++;
+        } else {
+          // Still no NFT
+          pending++;
         }
-        valid++;
+      } else {
+        // Active verification
+        if (ownedNfts.length === 0) {
+          invalid++;
+          console.log(
+            `[monitor] User ${verification.telegram_user_id} has no qualifying NFTs - will kick`
+          );
+
+          await handleNftTransferred(verification);
+        } else {
+          // Check if we need to switch to a different NFT
+          if (verification.nft_category) {
+            const currentNftStillValid = ownedNfts.some(
+              nft => nft.category.toLowerCase() === verification.nft_category!.toLowerCase() &&
+                     nft.commitment === verification.nft_commitment
+            );
+
+            if (!currentNftStillValid) {
+              // Original NFT is gone, but user has another qualifying NFT - auto-switch
+              const newNft = ownedNfts[0];
+              console.log(
+                `[monitor] User ${verification.telegram_user_id} switching to ${newNft.category.slice(0, 8)}...${newNft.commitment || 'null'}`
+              );
+              updateVerificationNft(verification.id, newNft.category, newNft.commitment);
+              switched++;
+            }
+          }
+          valid++;
+        }
       }
     } catch (error) {
       errors++;
@@ -240,8 +317,10 @@ async function checkAllVerifications(): Promise<void> {
     })
     .join(', ');
   const switchedInfo = switched > 0 ? `, ${switched} switched` : '';
+  const activatedInfo = activated > 0 ? `, ${activated} activated` : '';
+  const pendingInfo = pending > 0 ? `, ${pending} pending` : '';
   console.log(
-    `[monitor] ${verifications.length} users | ${valid} valid, ${invalid} invalid${switchedInfo}, ${errors} errors | groups: ${groupInfo}`
+    `[monitor] ${verifications.length} users | ${valid} valid, ${invalid} invalid${switchedInfo}${activatedInfo}${pendingInfo}, ${errors} errors | groups: ${groupInfo}`
   );
 }
 
@@ -252,7 +331,7 @@ async function handleNftTransferred(verification: {
   id: number;
   telegram_user_id: number;
   group_id: number;
-  nft_category: string;
+  nft_category: string | null;
   nft_commitment: string | null;
   bch_address: string;
 }): Promise<void> {
@@ -328,6 +407,11 @@ export async function checkUserVerification(
 
   const verification = verifications[0];
 
+  // Pending verifications don't have an NFT yet
+  if (!verification.nft_category) {
+    return false;
+  }
+
   const stillHoldsNft = await isNftAtAddress(
     verification.bch_address,
     verification.nft_category,
@@ -372,8 +456,9 @@ export async function checkGroupVerifications(groupId: number): Promise<{
         console.log(`[monitor] Group check: user ${verification.telegram_user_id} has no qualifying NFTs - will kick`);
         await handleNftTransferred(verification);
       } else {
-        const currentNftStillValid = ownedNfts.some(
-          nft => nft.category.toLowerCase() === verification.nft_category.toLowerCase() &&
+        // Check if current NFT still valid (only for active verifications with an NFT)
+        const currentNftStillValid = verification.nft_category && ownedNfts.some(
+          nft => nft.category.toLowerCase() === verification.nft_category!.toLowerCase() &&
                  nft.commitment === verification.nft_commitment
         );
 

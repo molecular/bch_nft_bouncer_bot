@@ -63,7 +63,7 @@ export function generateChallengeMessage(
   nonce: string
 ): string {
   const timestamp = Math.floor(Date.now() / 1000);
-  return `Verify NFT ownership for "${groupName}" (${groupId})\nnonce=${nonce}\ntime=${timestamp}`;
+  return `Verify address for "${groupName}" (${groupId})\nnonce=${nonce}\ntime=${timestamp}`;
 }
 
 /**

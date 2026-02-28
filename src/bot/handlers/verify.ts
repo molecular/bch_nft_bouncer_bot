@@ -37,7 +37,8 @@ const verificationState: Map<number, {
   challengeMessage?: string;
   address?: string;
   wcPairingTopic?: string;
-  wcNft?: { category: string; commitment: string | null };
+  wcNft?: { category: string; commitment: string | null } | null;
+  pendingMode?: boolean; // true if verifying address without NFT yet
 }> = new Map();
 
 // /start - Handle start with or without deep link
@@ -402,12 +403,63 @@ async function handleWcVerification(
         const ownedNfts = await checkNftOwnership(address, categories);
 
         if (ownedNfts.length === 0) {
-          await ctx.reply(
-            '❌ No qualifying NFTs found in your wallet.\n\n' +
-            'Make sure your wallet contains an NFT from one of the required categories.'
+          // No NFT yet - store as pending verification
+          // Still need to verify address ownership via signature
+          state.address = address;
+          state.wcNft = null; // No NFT yet
+
+          // Request signature to prove address ownership
+          const challenge = createChallenge(userId, state.groupId, address);
+          const challengeMessage = generateChallengeMessage(
+            state.groupName,
+            state.groupId,
+            challenge.nonce
           );
-          await disconnectSession(userId);
-          verificationState.delete(userId);
+          state.challenge = challenge;
+          state.challengeMessage = challengeMessage;
+
+          await ctx.reply(
+            '⏳ No qualifying NFTs found yet, but you can still verify your address.\n\n' +
+            '📝 Please approve the signature request to prove address ownership...'
+          );
+
+          try {
+            const signature = await requestSignMessage(userId, challengeMessage, address);
+
+            // Verify signature
+            const sigValid = await verifySignedMessage(challengeMessage, signature, address);
+            if (!sigValid) {
+              await ctx.reply('❌ Signature verification failed. Please try again with /wc');
+              deleteChallenge(challenge.id);
+              await disconnectSession(userId);
+              verificationState.delete(userId);
+              return;
+            }
+
+            // Store as pending verification
+            const username = ctx.from?.username || null;
+            addVerification(userId, username, state.groupId, null, null, address, 'pending');
+            addAddressToMonitor(address);
+            deleteChallenge(challenge.id);
+            // Keep pending_kick - user is still pending
+
+            await ctx.reply(
+              '✅ **Address verified!**\n\n' +
+              `Your address \`${address.slice(0, 20)}...\` is now being monitored.\n\n` +
+              '⏳ You\'ll be automatically granted access when you receive a qualifying NFT.\n\n' +
+              'I\'ll DM you when that happens!',
+              { parse_mode: 'Markdown' }
+            );
+
+            await disconnectSession(userId);
+            verificationState.delete(userId);
+          } catch (error: any) {
+            console.error('Pending verification signature error:', error);
+            deleteChallenge(challenge.id);
+            await disconnectSession(userId);
+            verificationState.delete(userId);
+            await ctx.reply('❌ Signature failed. Please try again with /wc');
+          }
           return;
         }
 
@@ -585,10 +637,29 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
       const ownedNfts = await checkNftOwnership(address, categories);
 
       if (ownedNfts.length === 0) {
+        // No NFT yet - offer to store as pending verification
+        // Still need to verify address ownership via signature
+        const challenge = createChallenge(userId, state.groupId, address);
+        const challengeMessage = generateChallengeMessage(
+          state.groupName,
+          state.groupId,
+          challenge.nonce
+        );
+
+        state.step = 'signature';
+        state.challenge = challenge;
+        state.challengeMessage = challengeMessage;
+        state.address = address;
+        state.pendingMode = true; // Flag for pending verification
+
         await ctx.reply(
-          '❌ No qualifying NFTs found at this address.\n\n' +
-          'Make sure this address contains an NFT from one of the required categories, ' +
-          'then send the address again.'
+          '⏳ No qualifying NFTs found at this address yet.\n\n' +
+          'You can still verify your address now, and I\'ll **automatically grant access** when you receive a qualifying NFT.\n\n' +
+          '**Sign this message in your wallet:**\n\n' +
+          `\`\`\`\n${challengeMessage}\n\`\`\`\n\n` +
+          'In Electron Cash: Tools → Sign/verify message\n\n' +
+          'Then paste the **signature** here (base64 text).',
+          { parse_mode: 'Markdown' }
         );
         return;
       }
@@ -662,7 +733,28 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
       return;
     }
 
-    // Get the NFT info again
+    // Check if this is a pending mode verification (no NFT yet)
+    if (state.pendingMode) {
+      // Store as pending verification
+      const username = ctx.from?.username || null;
+      addVerification(userId, username, state.groupId, null, null, state.address, 'pending');
+      addAddressToMonitor(state.address);
+      deleteChallenge(state.challenge.id);
+      // Keep pending_kick - user is still pending
+
+      await ctx.reply(
+        '✅ **Address verified!**\n\n' +
+        `Your address \`${state.address.slice(0, 20)}...\` is now being monitored.\n\n` +
+        '⏳ You\'ll be automatically granted access when you receive a qualifying NFT.\n\n' +
+        'I\'ll DM you when that happens!',
+        { parse_mode: 'Markdown' }
+      );
+
+      verificationState.delete(userId);
+      return;
+    }
+
+    // Get the NFT info again (normal flow with NFT)
     const categories = getNftCategories(state.groupId);
     const ownedNfts = await checkNftOwnership(state.address, categories);
 

@@ -51,14 +51,32 @@ export function addVerification(
   telegramUserId: number,
   telegramUsername: string | null,
   groupId: number,
-  nftCategory: string,
+  nftCategory: string | null,
   nftCommitment: string | null,
-  bchAddress: string
+  bchAddress: string,
+  status: 'pending' | 'active' = 'active'
 ): void {
   db.prepare(`
-    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, nft_category, nft_commitment, bch_address)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(telegramUserId, telegramUsername, groupId, nftCategory, nftCommitment, bchAddress);
+    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, nft_category, nft_commitment, bch_address, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(telegramUserId, telegramUsername, groupId, nftCategory, nftCommitment, bchAddress, status);
+}
+
+export function updateVerificationStatus(
+  id: number,
+  status: 'pending' | 'active',
+  nftCategory?: string,
+  nftCommitment?: string | null
+): void {
+  if (nftCategory !== undefined) {
+    db.prepare(`
+      UPDATE verifications SET status = ?, nft_category = ?, nft_commitment = ? WHERE id = ?
+    `).run(status, nftCategory, nftCommitment ?? null, id);
+  } else {
+    db.prepare(`
+      UPDATE verifications SET status = ? WHERE id = ?
+    `).run(status, id);
+  }
 }
 
 export function getVerification(
@@ -191,6 +209,7 @@ export function deletePendingKick(telegramUserId: number, groupId: number): void
 // ============ Monitoring Helpers ============
 
 export function getAllVerifiedAddresses(): string[] {
+  // Include both active and pending verifications - we monitor all addresses
   const rows = db.prepare('SELECT DISTINCT bch_address FROM verifications')
     .all() as { bch_address: string }[];
   return rows.map(r => r.bch_address);
@@ -200,19 +219,39 @@ export function getVerificationsForMonitoring(): Array<{
   id: number;
   telegram_user_id: number;
   group_id: number;
-  nft_category: string;
+  nft_category: string | null;
   nft_commitment: string | null;
   bch_address: string;
+  status: 'pending' | 'active';
 }> {
   return db.prepare(`
-    SELECT id, telegram_user_id, group_id, nft_category, nft_commitment, bch_address
+    SELECT id, telegram_user_id, group_id, nft_category, nft_commitment, bch_address, COALESCE(status, 'active') as status
     FROM verifications
   `).all() as Array<{
     id: number;
     telegram_user_id: number;
     group_id: number;
-    nft_category: string;
+    nft_category: string | null;
     nft_commitment: string | null;
+    bch_address: string;
+    status: 'pending' | 'active';
+  }>;
+}
+
+export function getPendingVerificationsByAddress(bchAddress: string): Array<{
+  id: number;
+  telegram_user_id: number;
+  group_id: number;
+  bch_address: string;
+}> {
+  return db.prepare(`
+    SELECT id, telegram_user_id, group_id, bch_address
+    FROM verifications
+    WHERE bch_address = ? AND status = 'pending'
+  `).all(bchAddress) as Array<{
+    id: number;
+    telegram_user_id: number;
+    group_id: number;
     bch_address: string;
   }>;
 }

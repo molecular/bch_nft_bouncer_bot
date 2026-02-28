@@ -151,8 +151,8 @@ adminHandlers.command('remove_category', requireGroupAdmin, async (ctx: Context)
   }
 });
 
-// /list_categories - List configured NFT categories
-adminHandlers.command('list_categories', requireGroupAdmin, async (ctx: Context) => {
+// /list_categories - List configured NFT categories (available to all users)
+adminHandlers.command('list_categories', async (ctx: Context) => {
   if (ctx.chat?.type === 'private') {
     await ctx.reply('This command must be used in a group.');
     return;
@@ -162,14 +162,14 @@ adminHandlers.command('list_categories', requireGroupAdmin, async (ctx: Context)
   const group = getGroup(chatId);
 
   if (!group) {
-    await ctx.reply('This group is not set up. Run /setup first.');
+    await ctx.reply('This group is not set up for NFT verification.');
     return;
   }
 
   const categories = getNftCategories(chatId);
 
   if (categories.length === 0) {
-    await ctx.reply('No NFT categories configured.\n\nUse /add_category <category_id> to add one.');
+    await ctx.reply('No NFT categories configured for this group.');
     return;
   }
 

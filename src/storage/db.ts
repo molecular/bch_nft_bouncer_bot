@@ -90,6 +90,12 @@ export function initializeDatabase(): void {
     console.log('Added telegram_username column to verifications table');
   }
 
+  // Migration: Add status column if it doesn't exist (for pending verifications)
+  if (!columns.some(col => col.name === 'status')) {
+    db.exec("ALTER TABLE verifications ADD COLUMN status TEXT DEFAULT 'active'");
+    console.log('Added status column to verifications table');
+  }
+
   console.log('Database initialized');
 }
 

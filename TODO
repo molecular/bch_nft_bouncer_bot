@@ -5,7 +5,6 @@
  * jonathan: after verification, it would be nice if it showed me what NFT it found.
  * add bcmr lookup for nicer messaging (use token name instead of category id in user-facing messages)
  * add "user verified" message to the group, maybe with an nft pic?
- * /list_categories should be available to users
  * consider a /list_verifications command, maybe at in the bot chat rather than the group?
  * remove_category should accept category names (symbol? or whatever we display) instead of only the long hex id
  

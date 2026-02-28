@@ -18,5 +18,5 @@ while true; do
   BOT_PID=$!
   wait $BOT_PID
   echo "Bot exited, restarting in 3s..."
-  sleep 3
+  sleep 1
 done
