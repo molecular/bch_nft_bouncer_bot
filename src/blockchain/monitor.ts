@@ -218,7 +218,7 @@ async function activatePendingVerification(
       await botInstance.api.sendMessage(
         verification.telegram_user_id,
         `🎉 **Great news!**\n\n` +
-        `Your address received a qualifying NFT!\n\n` +
+        `Your wallet now meets the access requirements!\n\n` +
         `You now have full access to **${groupName}**.${groupLink}`,
         { parse_mode: 'Markdown' }
       );
@@ -402,9 +402,9 @@ async function handleNftTransferred(verification: {
       const groupName = group?.name || `Group ${verification.group_id}`;
       await botInstance.api.sendMessage(
         verification.telegram_user_id,
-        `⚠️ Your NFT was transferred out of your verified address.\n\n` +
-        `You've been restricted in **${groupName}** until you receive another qualifying NFT.\n\n` +
-        `I'm still monitoring your address - you'll be automatically re-activated when you receive one!`,
+        `⚠️ Your wallet no longer meets the access requirements for **${groupName}**.\n\n` +
+        `You've been restricted until you meet the requirements again.\n\n` +
+        `I'm still monitoring your address - you'll be automatically re-activated!`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {

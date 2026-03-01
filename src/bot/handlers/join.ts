@@ -3,6 +3,7 @@ import {
   getGroup,
   isGroupConfigured,
   getVerification,
+  getActiveVerificationForGroup,
   addPendingKick,
   getPendingKick,
   getNftCategories,
@@ -106,8 +107,8 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     // Post message in group
     await ctx.api.sendMessage(
       chatId,
-      `👋 ${username} - This group requires NFT verification.\n\n` +
-      `Accepted NFTs: ${categoryList}\n\n` +
+      `👋 ${username} - This group requires wallet verification.\n\n` +
+      `Requirements: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
 
@@ -116,8 +117,8 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
       await ctx.api.sendMessage(
         userId,
         `👋 Hello ${username}!\n\n` +
-        `You joined "${group.name}", which requires NFT verification.\n\n` +
-        `Accepted NFTs: ${categoryList}\n\n` +
+        `You joined "${group.name}", which requires wallet verification.\n\n` +
+        `Requirements: ${categoryList}\n\n` +
         `Click here to verify:\n${deepLink}`
       );
     } catch (dmError: any) {
@@ -155,7 +156,7 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     return next();
   }
 
-  // Check if this group is configured for NFT gating
+  // Check if this group is configured for wallet verification
   const group = getGroup(chatId);
   if (!group || !isGroupConfigured(chatId)) {
     return next(); // Not a gated group
@@ -171,10 +172,10 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     // If we can't check membership, continue with verification check
   }
 
-  // Check if user is verified
-  const verification = getVerification(userId, chatId);
-  if (verification) {
-    // User is verified - but check if they're still restricted (fallback fix)
+  // Check if user has any active verification (may have multiple addresses)
+  const activeVerification = getActiveVerificationForGroup(userId, chatId);
+  if (activeVerification) {
+    // User has an active verification - ensure unrestricted
     try {
       const wasRestricted = await unrestrictIfNeeded(ctx.api, chatId, userId);
       if (wasRestricted) {
@@ -184,6 +185,18 @@ joinHandlers.on('message', async (ctx: Context, next) => {
       console.error(`[join] Error unrestricting verified user ${userId}:`, error.message);
     }
     return next(); // User is verified, allow message
+  }
+
+  // Check if user has a pending verification - they're waiting for NFT
+  const pendingVerification = getVerification(userId, chatId);
+  if (pendingVerification && pendingVerification.status === 'pending') {
+    // User has pending verification - don't spam them, just delete message
+    try {
+      await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
+    } catch {
+      // Ignore delete errors
+    }
+    return; // Don't continue with "verify" prompt - they already know
   }
 
   // Unverified user posted - delete message and remind them
@@ -214,8 +227,8 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     // Notify in group
     await ctx.api.sendMessage(
       chatId,
-      `⚠️ ${username} - You must verify NFT ownership before posting.\n\n` +
-      `Accepted NFTs: ${categoryList}\n\n` +
+      `⚠️ ${username} - You must verify your wallet meets the access requirements.\n\n` +
+      `Requirements: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
 

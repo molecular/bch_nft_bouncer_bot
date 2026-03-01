@@ -12,6 +12,9 @@ import {
   addVerification,
   getVerification,
   getVerificationByNft,
+  getVerificationsForUser,
+  getVerificationById,
+  deleteVerification,
   getNftCategories,
   getGroup,
   isGroupConfigured,
@@ -24,7 +27,8 @@ import { generateQRBuffer } from '../../walletconnect/qr.js';
 import { requestAddresses, requestSignMessage } from '../../walletconnect/sign.js';
 import { config } from '../../config.js';
 import { unrestrictUser } from '../utils/permissions.js';
-import { addAddressToMonitor } from '../../blockchain/monitor.js';
+import { addAddressToMonitor, removeAddressFromMonitor } from '../../blockchain/monitor.js';
+import { getVerificationsByAddress } from '../../storage/queries.js';
 
 export const verifyHandlers = new Composer();
 
@@ -70,7 +74,7 @@ verifyHandlers.command('start', async (ctx: Context) => {
 
   if (pendingKicks.length > 0) {
     // User has pending verifications
-    let msg = `👋 Welcome! You need to verify NFT ownership to join the following group(s):\n\n`;
+    let msg = `👋 Welcome! You need to verify your wallet to access the following group(s):\n\n`;
 
     for (const pk of pendingKicks) {
       const group = getGroup(pk.group_id);
@@ -82,10 +86,10 @@ verifyHandlers.command('start', async (ctx: Context) => {
     await ctx.reply(msg);
   } else {
     await ctx.reply(
-      `👋 Welcome to the NFT Entry Bot!\n\n` +
-      `I help Telegram groups restrict access to NFT holders.\n\n` +
+      `👋 Welcome to the BCH Wallet Verification Bot!\n\n` +
+      `I help Telegram groups restrict access based on wallet contents (NFTs, tokens, BCH balance).\n\n` +
       `**For users:**\n` +
-      `• When you join a gated group, you'll be asked to verify NFT ownership\n` +
+      `• When you join a gated group, you'll be asked to verify your wallet\n` +
       `• Use /verify to start verification\n\n` +
       `**For group admins:**\n` +
       `• Add me to your group as an admin\n` +
@@ -104,7 +108,7 @@ verifyHandlers.command('verify', async (ctx: Context) => {
     const botUsername = ctx.me.username;
     const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
     await ctx.reply(
-      `🔐 To verify NFT ownership, click here:\n${deepLink}`,
+      `🔐 To verify your wallet, click here:\n${deepLink}`,
     );
     return;
   }
@@ -140,7 +144,7 @@ verifyHandlers.command('verify', async (ctx: Context) => {
 async function startVerification(ctx: Context, userId: number, groupId: number): Promise<void> {
   const group = getGroup(groupId);
   if (!group) {
-    await ctx.reply('This group is no longer configured for NFT verification.');
+    await ctx.reply('This group is no longer configured for wallet verification.');
     return;
   }
 
@@ -150,15 +154,8 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     return;
   }
 
-  // Check if already verified
-  const existing = getVerification(userId, groupId);
-  if (existing) {
-    await ctx.reply(
-      `You're already verified for this group!\n\n` +
-      `If you're having trouble joining, contact the group admin.`
-    );
-    return;
-  }
+  // Check for existing verifications for this group
+  const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === groupId);
 
   // Store state
   verificationState.set(userId, {
@@ -173,6 +170,18 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
 
   // Offer both verification methods
   let msg = `🔐 **Verification for ${group.name}**\n\n`;
+
+  // Show existing verifications if any
+  if (existingVerifications.length > 0) {
+    msg += `📋 **Your existing verifications:**\n\n`;
+    for (const v of existingVerifications) {
+      const statusIcon = v.status === 'active' ? '✅' : '⏳';
+      const addressShort = v.bch_address.slice(12, 22) + '...';
+      msg += `${statusIcon} ${addressShort}\n`;
+    }
+    msg += `\n_You can add another address below._\n\n`;
+  }
+
   msg += `To verify, I need to confirm you own an NFT from one of these collections:\n`;
   categories.forEach((cat, i) => {
     const metadata = metadataResults[i];
@@ -386,7 +395,7 @@ async function handleWcVerification(
     if (session) {
       // Session connected - proceed with verification
       try {
-        await ctx.reply('✅ Wallet connected! Verifying NFT ownership...');
+        await ctx.reply('✅ Wallet connected! Verifying address ownership...');
 
         // Get addresses
         const addressInfos = await requestAddresses(userId);
@@ -604,16 +613,16 @@ async function handleWcVerification(
 }
 
 // Handle text messages for manual verification
-verifyHandlers.on('message:text', async (ctx: Context) => {
-  if (ctx.chat?.type !== 'private') return;
-  if (!ctx.message?.text) return;
+verifyHandlers.on('message:text', async (ctx: Context, next) => {
+  if (ctx.chat?.type !== 'private') return next();
+  if (!ctx.message?.text) return next();
 
   const userId = ctx.from!.id;
   const state = verificationState.get(userId);
   const text = ctx.message.text.trim();
 
-  // Ignore commands
-  if (text.startsWith('/')) return;
+  // Ignore commands - let command handlers process them
+  if (text.startsWith('/')) return next();
 
   if (!state) return;
 
@@ -789,6 +798,105 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
 
     verificationState.delete(userId);
   }
+});
+
+// /list_verifications - Show all user's verifications
+verifyHandlers.command('list_verifications', async (ctx: Context) => {
+  console.log('/list_verifications command received');
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Please use this command in a private chat with me.');
+    return;
+  }
+
+  const userId = ctx.from!.id;
+  const verifications = getVerificationsForUser(userId);
+
+  if (verifications.length === 0) {
+    await ctx.reply('You have no verifications.');
+    return;
+  }
+
+  let msg = '📋 **Your verifications:**\n\n';
+
+  for (const v of verifications) {
+    const group = getGroup(v.group_id);
+    const groupName = group?.name || `Group ${v.group_id}`;
+    const addressShort = v.bch_address.slice(0, 25) + '...';
+    const statusIcon = v.status === 'active' ? '✅' : '⏳';
+
+    // Get category display name
+    let categoryDisplay = 'waiting for NFT';
+    if (v.nft_category && v.nft_category !== '') {
+      const metadata = await fetchTokenMetadata(v.nft_category);
+      categoryDisplay = formatTokenName(v.nft_category, metadata);
+    }
+
+    msg += `**[${v.id}]**: ${groupName}\n`;
+    msg += `    ${statusIcon} ${v.status} | ${categoryDisplay}\n`;
+    msg += `    📍 ${addressShort}\n\n`;
+  }
+
+  msg += `\nUse \`/unverify <id>\` to remove a verification.`;
+
+  await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+// /unverify - Remove a verification
+verifyHandlers.command('unverify', async (ctx: Context) => {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Please use this command in a private chat with me.');
+    return;
+  }
+
+  const userId = ctx.from!.id;
+  const args = (ctx.match as string || '').trim();
+
+  if (!args) {
+    await ctx.reply(
+      'Usage: `/unverify <id>`\n\n' +
+      'Use `/list_verifications` to see your verification IDs.',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  const verificationId = parseInt(args, 10);
+  if (isNaN(verificationId)) {
+    await ctx.reply('Invalid verification ID. Use `/list_verifications` to see your IDs.', { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Get the verification and verify ownership
+  const verification = getVerificationById(verificationId);
+  if (!verification) {
+    await ctx.reply('Verification not found.');
+    return;
+  }
+
+  if (verification.telegram_user_id !== userId) {
+    await ctx.reply('This verification does not belong to you.');
+    return;
+  }
+
+  const group = getGroup(verification.group_id);
+  const groupName = group?.name || `Group ${verification.group_id}`;
+  const address = verification.bch_address;
+
+  // Delete the verification
+  deleteVerification(verificationId);
+
+  // Check if any other verifications use this address
+  const otherVerifications = getVerificationsByAddress(address);
+  if (otherVerifications.length === 0) {
+    // No other verifications use this address - stop monitoring
+    removeAddressFromMonitor(address);
+  }
+
+  await ctx.reply(
+    `✅ Verification removed:\n\n` +
+    `Group: ${groupName}\n` +
+    `Address: ${address.slice(0, 25)}...`
+  );
 });
 
 // /cancel - Cancel verification

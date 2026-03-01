@@ -77,7 +77,10 @@ async function main(): Promise<void> {
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start the bot' },
     { command: 'help', description: 'Show help' },
-    { command: 'verify', description: 'Verify NFT ownership' },
+    { command: 'verify', description: 'Verify your wallet' },
+    { command: 'list_verifications', description: 'List your verifications' },
+    { command: 'unverify', description: 'Remove a verification' },
+    { command: 'cancel', description: 'Cancel current verification' },
   ]);
 
   await bot.start({

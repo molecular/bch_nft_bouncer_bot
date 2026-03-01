@@ -88,6 +88,25 @@ export function getVerification(
   `).get(telegramUserId, groupId) as Verification | undefined;
 }
 
+export function getActiveVerificationForGroup(
+  telegramUserId: number,
+  groupId: number
+): Verification | undefined {
+  return db.prepare(`
+    SELECT * FROM verifications WHERE telegram_user_id = ? AND group_id = ? AND status = 'active' LIMIT 1
+  `).get(telegramUserId, groupId) as Verification | undefined;
+}
+
+export function getVerificationsForUser(telegramUserId: number): Verification[] {
+  return db.prepare(`
+    SELECT * FROM verifications WHERE telegram_user_id = ? ORDER BY id
+  `).all(telegramUserId) as Verification[];
+}
+
+export function getVerificationById(id: number): Verification | undefined {
+  return db.prepare('SELECT * FROM verifications WHERE id = ?').get(id) as Verification | undefined;
+}
+
 export function getVerificationByNft(
   nftCategory: string,
   nftCommitment: string | null,

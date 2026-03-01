@@ -21,18 +21,20 @@ export function createBot(): Bot {
   bot.command('help', async (ctx) => {
     if (ctx.chat?.type === 'private') {
       await ctx.reply(
-        `🤖 **NFT Entry Bot**\n\n` +
-        `I help Telegram groups restrict access to NFT holders.\n\n` +
+        `🤖 **BCH Wallet Verification Bot**\n\n` +
+        `I help Telegram groups restrict access based on wallet contents.\n\n` +
         `**User Commands:**\n` +
         `/start - Start the bot\n` +
-        `/verify - Verify NFT ownership\n` +
+        `/verify - Verify your wallet\n` +
         `/wc - Connect wallet via WalletConnect\n` +
+        `/list\\_verifications - List your verifications\n` +
+        `/unverify - Remove a verification\n` +
         `/cancel - Cancel verification\n` +
         `/help - Show this help\n\n` +
         `**Admin Commands (in groups):**\n` +
         `/setup - Initialize bot for group\n` +
-        `/addnft - Add NFT category\n` +
-        `/removenft - Remove NFT category\n` +
+        `/addnft - Add NFT requirement\n` +
+        `/removenft - Remove NFT requirement\n` +
         `/status - Show group configuration\n` +
         `/adminhelp - Admin help`,
         { parse_mode: 'Markdown' }
