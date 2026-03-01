@@ -6,11 +6,8 @@ import type { Bot } from 'grammy';
 
 let botInstance: Bot | null = null;
 
-// Single subscription cancel function
-let subscriptionCancel: (() => void) | null = null;
-
-// Set of addresses we're monitoring
-const monitoredAddresses = new Set<string>();
+// Track subscriptions: address -> cancel function
+const addressSubscriptions = new Map<string, () => void>();
 
 // Track when each address was added (to ignore notifications in first few seconds)
 const addressAddedTimes = new Map<string, number>();
@@ -30,14 +27,11 @@ export async function startMonitoring(bot: Bot): Promise<void> {
 
   console.log('Starting NFT transfer monitoring...');
 
-  // Set up single subscription handler for all addresses
-  await setupSubscriptionHandler();
-
-  // Add all existing verified addresses to monitoring
+  // Subscribe to all existing verified addresses
   const addresses = getAllVerifiedAddresses();
-  console.log(`[monitor] Adding ${addresses.length} addresses to monitor`);
+  console.log(`[monitor] Subscribing to ${addresses.length} addresses`);
   for (const address of addresses) {
-    addAddressToMonitor(address);
+    await addAddressToMonitor(address);
   }
 
   // Run once on startup to catch anything missed while bot was down
@@ -48,16 +42,15 @@ export async function startMonitoring(bot: Bot): Promise<void> {
  * Stop monitoring
  */
 export function stopMonitoring(): void {
-  // Cancel the single subscription
-  if (subscriptionCancel) {
+  // Cancel all subscriptions
+  for (const [address, cancel] of addressSubscriptions) {
     try {
-      subscriptionCancel();
+      cancel();
     } catch (e) {
       // Ignore cancellation errors
     }
-    subscriptionCancel = null;
   }
-  monitoredAddresses.clear();
+  addressSubscriptions.clear();
   addressAddedTimes.clear();
 
   botInstance = null;
@@ -65,74 +58,62 @@ export function stopMonitoring(): void {
 }
 
 /**
- * Set up the single subscription handler.
- * Electrum broadcasts all notifications to all subscribers, so we only need one handler.
- * We pick an arbitrary address to subscribe to - the handler will receive all notifications.
+ * Subscribe to an address for transaction notifications
  */
-async function setupSubscriptionHandler(): Promise<void> {
-  if (subscriptionCancel) {
-    return; // Already set up
+async function subscribeToAddress(address: string): Promise<void> {
+  if (addressSubscriptions.has(address)) {
+    return; // Already subscribed
   }
 
   try {
     const provider = await getProvider();
 
-    // Subscribe to a placeholder address - we'll receive ALL notifications regardless
-    // We use any verified address, or a dummy one if none exist yet
-    const addresses = getAllVerifiedAddresses();
-    const subscribeAddress = addresses[0] || 'bitcoincash:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5cjkw02';
-
-    subscriptionCancel = await provider.subscribeToAddress(subscribeAddress, async (status: any) => {
-      // Status is [changedAddress, statusHash]
-      const changedAddress = Array.isArray(status) ? status[0] : null;
-      if (!changedAddress) {
-        return;
-      }
-
-      // Only process if this is an address we're monitoring
-      if (!monitoredAddresses.has(changedAddress)) {
-        return;
-      }
-
-      // Ignore notifications during warmup period for this address
-      const addedTime = addressAddedTimes.get(changedAddress) || 0;
+    const cancel = await provider.subscribeToAddress(address, async (status: any) => {
+      // Ignore notifications during warmup period
+      const addedTime = addressAddedTimes.get(address) || 0;
       if (Date.now() - addedTime < SUBSCRIPTION_WARMUP_MS) {
         return;
       }
 
-      console.log(`[monitor] Address change: ${changedAddress.slice(0, 25)}...`);
+      console.log(`[monitor] Address change: ${address.slice(0, 25)}...`);
 
       // Check all verifications for this address
-      await checkAddressVerifications(changedAddress);
+      await checkAddressVerifications(address);
     });
 
-    console.log('[monitor] Subscription handler set up');
+    addressSubscriptions.set(address, cancel);
   } catch (error) {
-    console.error('[monitor] Failed to set up subscription handler:', error);
+    console.error(`[monitor] Failed to subscribe to ${address.slice(0, 25)}...:`, error);
   }
 }
 
 /**
- * Add an address to the monitoring set
+ * Add an address to monitoring (subscribes to electrum notifications)
  */
-export function addAddressToMonitor(address: string): void {
-  if (monitoredAddresses.has(address)) {
+export async function addAddressToMonitor(address: string): Promise<void> {
+  if (addressSubscriptions.has(address)) {
     return; // Already monitoring
   }
 
-  monitoredAddresses.add(address);
   addressAddedTimes.set(address, Date.now());
-  console.log(`[monitor] Now monitoring ${address.slice(0, 25)}... (${monitoredAddresses.size} total)`);
+  await subscribeToAddress(address);
+  console.log(`[monitor] Now monitoring ${address.slice(0, 25)}... (${addressSubscriptions.size} total)`);
 }
 
 /**
- * Remove an address from monitoring (when no longer needed)
+ * Remove an address from monitoring
  */
 export function removeAddressFromMonitor(address: string): void {
-  if (monitoredAddresses.has(address)) {
-    monitoredAddresses.delete(address);
+  const cancel = addressSubscriptions.get(address);
+  if (cancel) {
+    try {
+      cancel();
+    } catch (e) {
+      // Ignore cancellation errors
+    }
+    addressSubscriptions.delete(address);
     addressAddedTimes.delete(address);
-    console.log(`[monitor] Stopped monitoring ${address.slice(0, 25)}... (${monitoredAddresses.size} remaining)`);
+    console.log(`[monitor] Stopped monitoring ${address.slice(0, 25)}... (${addressSubscriptions.size} remaining)`);
   }
 }
 
@@ -201,8 +182,18 @@ async function activatePendingVerification(
     // Remove from pending kicks
     deletePendingKick(verification.telegram_user_id, verification.group_id);
 
-    // Unrestrict user in group
-    await unrestrictUser(botInstance.api, verification.group_id, verification.telegram_user_id);
+    // Check if user is admin/owner - if so, skip unrestrict (they don't need it)
+    let isAdmin = false;
+    try {
+      const member = await botInstance.api.getChatMember(verification.group_id, verification.telegram_user_id);
+      isAdmin = member.status === 'administrator' || member.status === 'creator';
+    } catch {
+      // If we can't check, try to unrestrict anyway
+    }
+
+    if (!isAdmin) {
+      await unrestrictUser(botInstance.api, verification.group_id, verification.telegram_user_id);
+    }
 
     console.log(`[monitor] Activated pending verification for user ${verification.telegram_user_id} in group ${verification.group_id}`);
 
@@ -211,11 +202,24 @@ async function activatePendingVerification(
       const group = getGroup(verification.group_id);
       const groupName = group?.name || `Group ${verification.group_id}`;
 
+      // Try to get a link to the group
+      let groupLink = '';
+      try {
+        const chat = await botInstance.api.getChat(verification.group_id);
+        if ('username' in chat && chat.username) {
+          groupLink = `\n\nGo to group: https://t.me/${chat.username}`;
+        } else if ('invite_link' in chat && chat.invite_link) {
+          groupLink = `\n\nGo to group: ${chat.invite_link}`;
+        }
+      } catch {
+        // Ignore errors getting chat info
+      }
+
       await botInstance.api.sendMessage(
         verification.telegram_user_id,
         `🎉 **Great news!**\n\n` +
         `Your address received a qualifying NFT!\n\n` +
-        `You now have full access to **${groupName}**.`,
+        `You now have full access to **${groupName}**.${groupLink}`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {
@@ -349,45 +353,51 @@ async function handleNftTransferred(verification: {
 
     if (member.status === 'administrator' || member.status === 'creator') {
       console.log(
-        `User ${verification.telegram_user_id} is admin/creator - not kicking, but removing verification`
+        `User ${verification.telegram_user_id} is admin/creator - setting to pending, not kicking`
       );
-      // Still remove verification record so they'd need to re-verify if demoted
-      deleteVerification(verification.id);
+      // Set back to pending - they can receive another NFT
+      updateVerificationStatus(verification.id, 'pending');
       return;
     }
 
-    // Kick the user with short ban (auto-unbans after 35 seconds)
-    await botInstance.api.banChatMember(
-      verification.group_id,
-      verification.telegram_user_id,
-      { until_date: Math.floor(Date.now() / 1000) + 35 }
-    );
+    // Set verification back to pending (keeps monitoring the address)
+    updateVerificationStatus(verification.id, 'pending');
 
-    console.log(
-      `Kicked user ${verification.telegram_user_id} from group ${verification.group_id} - NFT transferred`
-    );
-
-    // Try to notify the user
+    // Restrict the user (but don't kick - they can still receive NFT and get re-activated)
     try {
+      await botInstance.api.restrictChatMember(
+        verification.group_id,
+        verification.telegram_user_id,
+        { permissions: { can_send_messages: false } }
+      );
+      console.log(
+        `Restricted user ${verification.telegram_user_id} in group ${verification.group_id} - NFT transferred, now pending`
+      );
+    } catch (restrictError) {
+      console.error('Could not restrict user:', restrictError);
+    }
+
+    // Notify the user
+    try {
+      const group = getGroup(verification.group_id);
+      const groupName = group?.name || `Group ${verification.group_id}`;
       await botInstance.api.sendMessage(
         verification.telegram_user_id,
-        `You have been removed from the group because your verified NFT was transferred.\n\n` +
-        `If you still own a qualifying NFT, you can rejoin and verify again.`
+        `⚠️ Your NFT was transferred out of your verified address.\n\n` +
+        `You've been restricted in **${groupName}** until you receive another qualifying NFT.\n\n` +
+        `I'm still monitoring your address - you'll be automatically re-activated when you receive one!`,
+        { parse_mode: 'Markdown' }
       );
     } catch (dmError) {
-      // User may have blocked the bot or never started a conversation
-      console.log('Could not DM user about removal:', dmError);
+      console.log('Could not DM user about restriction:', dmError);
     }
 
   } catch (error) {
     console.error(
-      `Error kicking user ${verification.telegram_user_id}:`,
+      `Error handling NFT transfer for user ${verification.telegram_user_id}:`,
       error
     );
   }
-
-  // Remove the verification record
-  deleteVerification(verification.id);
 }
 
 /**

@@ -17,6 +17,6 @@ while true; do
   npx tsx src/index.ts 2>&1 | tee -a bot.log &
   BOT_PID=$!
   wait $BOT_PID
-  echo "Bot exited, restarting in 3s..."
+  echo "Bot exited, restarting in 1s..."
   sleep 1
 done

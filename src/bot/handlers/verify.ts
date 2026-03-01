@@ -304,7 +304,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
     // Success! Store verification
     const username = ctx.from?.username || null;
     addVerification(userId, username, state.groupId, state.wcNft.category, state.wcNft.commitment, state.address);
-    addAddressToMonitor(state.address); // Start monitoring this address
+    await addAddressToMonitor(state.address); // Start monitoring this address
     if (state.challenge) {
       deleteChallenge(state.challenge.id);
     }
@@ -436,10 +436,10 @@ async function handleWcVerification(
               return;
             }
 
-            // Store as pending verification
+            // Store as pending verification (use empty string for nft_category due to NOT NULL constraint)
             const username = ctx.from?.username || null;
-            addVerification(userId, username, state.groupId, null, null, address, 'pending');
-            addAddressToMonitor(address);
+            addVerification(userId, username, state.groupId, '', null, address, 'pending');
+            await addAddressToMonitor(address);
             deleteChallenge(challenge.id);
             // Keep pending_kick - user is still pending
 
@@ -510,7 +510,7 @@ async function handleWcVerification(
         // Success! Store verification
         const username = ctx.from?.username || null;
         addVerification(userId, username, state.groupId, nft.category, nft.commitment, address);
-        addAddressToMonitor(address); // Start monitoring this address
+        await addAddressToMonitor(address); // Start monitoring this address
         deleteChallenge(challenge.id);
         deletePendingKick(userId, state.groupId);
 
@@ -735,9 +735,9 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
 
     // Check if this is a pending mode verification (no NFT yet)
     if (state.pendingMode) {
-      // Store as pending verification
+      // Store as pending verification (use empty string for nft_category due to NOT NULL constraint)
       const username = ctx.from?.username || null;
-      addVerification(userId, username, state.groupId, null, null, state.address, 'pending');
+      addVerification(userId, username, state.groupId, '', null, state.address, 'pending');
       addAddressToMonitor(state.address);
       deleteChallenge(state.challenge.id);
       // Keep pending_kick - user is still pending
@@ -770,7 +770,7 @@ verifyHandlers.on('message:text', async (ctx: Context) => {
     // Store verification
     const username = ctx.from?.username || null;
     addVerification(userId, username, state.groupId, nft.category, nft.commitment, state.address);
-    addAddressToMonitor(state.address); // Start monitoring this address
+    await addAddressToMonitor(state.address); // Start monitoring this address
     deleteChallenge(state.challenge.id);
     deletePendingKick(userId, state.groupId);
 

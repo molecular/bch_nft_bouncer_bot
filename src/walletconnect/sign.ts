@@ -83,7 +83,7 @@ export async function requestSignMessage(
         method: 'bch_signMessage',
         params: {
           message,
-          userPrompt: 'Sign to verify NFT ownership',
+          userPrompt: 'Sign to verify address ownership',
         },
       },
     });
