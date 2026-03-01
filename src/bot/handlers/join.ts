@@ -55,16 +55,22 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return; // Not a gated group
   }
 
-  // Check if user is already verified
+  // Check if user is already verified (active, not pending)
   const verification = getVerification(userId, chatId);
-  if (verification) {
-    console.log(`User ${userId} already verified for group ${chatId}, ensuring unrestricted`);
+  if (verification && verification.status === 'active') {
+    console.log(`User ${userId} already verified (active) for group ${chatId}, ensuring unrestricted`);
     try {
       await unrestrictUser(ctx.api, chatId, userId);
       console.log(`User ${userId} unrestricted on rejoin`);
     } catch (error: any) {
       console.error(`Failed to unrestrict verified user ${userId}:`, error.message);
     }
+    return;
+  }
+
+  // If user has a pending verification, keep them restricted
+  if (verification && verification.status === 'pending') {
+    console.log(`User ${userId} has pending verification for group ${chatId}, staying restricted`);
     return;
   }
 

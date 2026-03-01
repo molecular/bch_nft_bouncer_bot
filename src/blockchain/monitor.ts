@@ -270,8 +270,27 @@ async function checkAllVerifications(): Promise<void> {
           await activatePendingVerification(verification, nft.category, nft.commitment);
           activated++;
         } else {
-          // Still no NFT
+          // Still no NFT - ensure user is restricted
           pending++;
+          if (botInstance) {
+            try {
+              // Check if user is admin/owner - don't restrict them
+              const member = await botInstance.api.getChatMember(
+                verification.group_id,
+                verification.telegram_user_id
+              );
+              if (member.status !== 'administrator' && member.status !== 'creator' && member.status !== 'restricted') {
+                await botInstance.api.restrictChatMember(
+                  verification.group_id,
+                  verification.telegram_user_id,
+                  { permissions: { can_send_messages: false } }
+                );
+                console.log(`[monitor] Restricted pending user ${verification.telegram_user_id} in group ${verification.group_id}`);
+              }
+            } catch (e) {
+              // Ignore errors (user may have left, bot may not have permission)
+            }
+          }
         }
       } else {
         // Active verification
