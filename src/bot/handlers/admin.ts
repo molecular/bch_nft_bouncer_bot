@@ -279,10 +279,10 @@ adminHandlers.command('list_conditions', async (ctx: Context) => {
   const nftRules = rules.filter(r => r.rule_type === 'nft');
   const balanceRules = rules.filter(r => r.rule_type === 'balance');
 
-  let msg = '**Access Conditions:**\n\n';
+  let msg = '*Access Conditions:*\n\n';
 
   if (nftRules.length > 0) {
-    msg += '**NFT** _(at least one required)_\n';
+    msg += '--- *NFT* _(at least one required)_ ---\n';
 
     // Fetch metadata for all categories
     const categories = [...new Set(nftRules.map(r => r.category).filter(Boolean))];
@@ -296,36 +296,40 @@ adminHandlers.command('list_conditions', async (ctx: Context) => {
     for (const rule of nftRules) {
       const metadata = rule.category ? metadataMap.get(rule.category) : null;
       const displayName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
+      // Shorten category ID (first 8 + last 4 chars)
+      const shortCat = rule.category ? `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}` : '';
 
-      msg += `• **[${rule.id}]** ${rule.label || displayName}\n`;
+      msg += `• *[${rule.id}]* ${rule.label || displayName}\n`;
+      // Show shortened category ID (backticks allow tap-to-copy on mobile)
+      msg += `   Category ID: \`${shortCat}\`\n`;
       if (rule.start_commitment && rule.end_commitment) {
-        msg += `   Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
+        msg += `   Commitment Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
       }
-      // Always show full category ID so it can be copied
-      msg += `   \`${rule.category}\`\n`;
     }
     msg += '\n';
   }
 
   if (balanceRules.length > 0) {
-    msg += '**Balance** _(at least one required)_\n';
+    msg += '--- *Balance* _(at least one required)_ ---\n';
 
     for (const rule of balanceRules) {
       if (rule.category?.toUpperCase() === 'BCH') {
         const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
         const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
-        msg += `• **[${rule.id}]** ${rule.label || `${bchDisplay} BCH`}\n`;
+        msg += `• *[${rule.id}]* ${rule.label || `${bchDisplay} BCH`}\n`;
       } else {
         const metadata = rule.category ? await fetchTokenMetadata(rule.category) : null;
         const displayName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
+        // Shorten category ID (first 8 + last 4 chars)
+        const shortCat = rule.category ? `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}` : '';
         // Use label if set (which now auto-includes symbol), otherwise show amount + token name
         if (rule.label) {
-          msg += `• **[${rule.id}]** ${rule.label}\n`;
+          msg += `• *[${rule.id}]* ${rule.label}\n`;
         } else {
-          msg += `• **[${rule.id}]** ${rule.min_amount} ${displayName}\n`;
+          msg += `• *[${rule.id}]* ${rule.min_amount} ${displayName}\n`;
         }
-        // Show full category ID for FT rules
-        msg += `   \`${rule.category}\`\n`;
+        // Show shortened category ID (backticks allow tap-to-copy on mobile)
+        msg += `   Category ID: \`${shortCat}\`\n`;
       }
     }
     msg += '\n';
