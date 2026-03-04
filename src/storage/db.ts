@@ -75,12 +75,27 @@ export function initializeDatabase(): void {
       fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Access rules for group gating (NFT with optional commitment ranges, or balance requirements)
+    CREATE TABLE IF NOT EXISTS group_access_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
+      rule_type TEXT NOT NULL,        -- 'nft' or 'balance'
+      category TEXT,                  -- Token category ID, or 'BCH' for BCH balance
+      start_commitment TEXT,          -- Hex, inclusive (nft with range only)
+      end_commitment TEXT,            -- Hex, inclusive (nft with range only)
+      min_amount TEXT,                -- BigInt as string (balance rules only)
+      label TEXT,                     -- Human-readable (e.g., "Jessicas", "21 BCH Club")
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(group_id, rule_type, category, start_commitment, end_commitment)
+    );
+
     -- Create indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_verifications_user ON verifications(telegram_user_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_group ON verifications(group_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_address ON verifications(bch_address);
     CREATE INDEX IF NOT EXISTS idx_challenges_user ON challenges(telegram_user_id);
     CREATE INDEX IF NOT EXISTS idx_pending_kicks_user ON pending_kicks(telegram_user_id);
+    CREATE INDEX IF NOT EXISTS idx_access_rules_group ON group_access_rules(group_id);
   `);
 
   // Migration: Add telegram_username column if it doesn't exist
@@ -94,6 +109,18 @@ export function initializeDatabase(): void {
   if (!columns.some(col => col.name === 'status')) {
     db.exec("ALTER TABLE verifications ADD COLUMN status TEXT DEFAULT 'active'");
     console.log('Added status column to verifications table');
+  }
+
+  // Migration: Copy data from group_nft_categories to group_access_rules if needed
+  const accessRulesCount = db.prepare('SELECT COUNT(*) as count FROM group_access_rules').get() as { count: number };
+  const nftCategoriesCount = db.prepare('SELECT COUNT(*) as count FROM group_nft_categories').get() as { count: number };
+
+  if (accessRulesCount.count === 0 && nftCategoriesCount.count > 0) {
+    db.exec(`
+      INSERT INTO group_access_rules (group_id, rule_type, category)
+      SELECT group_id, 'nft', category FROM group_nft_categories
+    `);
+    console.log(`Migrated ${nftCategoriesCount.count} NFT categories to access rules`);
   }
 
   console.log('Database initialized');

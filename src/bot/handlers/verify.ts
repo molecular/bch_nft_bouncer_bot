@@ -18,8 +18,12 @@ import {
   getNftCategories,
   getGroup,
   isGroupConfigured,
+  getAccessRules,
+  getVerificationsByAddress,
+  getVerificationsForMonitoring,
+  updateVerificationStatus,
 } from '../../storage/queries.js';
-import { checkNftOwnership, isValidCategoryId } from '../../blockchain/nft.js';
+import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
@@ -27,8 +31,8 @@ import { generateQRBuffer } from '../../walletconnect/qr.js';
 import { requestAddresses, requestSignMessage } from '../../walletconnect/sign.js';
 import { config } from '../../config.js';
 import { unrestrictUser } from '../utils/permissions.js';
-import { addAddressToMonitor, removeAddressFromMonitor } from '../../blockchain/monitor.js';
-import { getVerificationsByAddress } from '../../storage/queries.js';
+import { addAddressToMonitor, removeAddressFromMonitor, checkUserVerification } from '../../blockchain/monitor.js';
+import type { AccessRule } from '../../storage/types.js';
 
 export const verifyHandlers = new Composer();
 
@@ -148,14 +152,15 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     return;
   }
 
-  const categories = getNftCategories(groupId);
-  if (categories.length === 0) {
-    await ctx.reply('This group has no NFT categories configured. Contact the group admin.');
+  const rules = getAccessRules(groupId);
+  if (rules.length === 0) {
+    await ctx.reply('This group has no access conditions configured. Contact the group admin.');
     return;
   }
 
   // Check for existing verifications for this group
   const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === groupId);
+  const provenAddresses = [...new Set(existingVerifications.map(v => v.bch_address))];
 
   // Store state
   verificationState.set(userId, {
@@ -164,39 +169,126 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     groupName: group.name || `Group ${groupId}`,
   });
 
-  // Fetch metadata for all categories (in parallel)
-  const metadataPromises = categories.map(cat => fetchTokenMetadata(cat));
-  const metadataResults = await Promise.all(metadataPromises);
-
-  // Offer both verification methods
+  // Build the verification message
   let msg = `🔐 **Verification for ${group.name}**\n\n`;
 
   // Show existing verifications if any
   if (existingVerifications.length > 0) {
-    msg += `📋 **Your existing verifications:**\n\n`;
+    msg += `📋 **Your verified addresses:**\n`;
     for (const v of existingVerifications) {
       const statusIcon = v.status === 'active' ? '✅' : '⏳';
       const addressShort = v.bch_address.slice(12, 22) + '...';
       msg += `${statusIcon} ${addressShort}\n`;
     }
-    msg += `\n_You can add another address below._\n\n`;
+    msg += `\n`;
   }
 
-  msg += `To verify, I need to confirm you own an NFT from one of these collections:\n`;
-  categories.forEach((cat, i) => {
-    const metadata = metadataResults[i];
-    const displayName = formatTokenName(cat, metadata);
-    msg += `• ${displayName}\n`;
-  });
+  // Check which rules are satisfied and show requirements
+  if (provenAddresses.length > 0) {
+    const result = await checkAccessRulesMultiAddress(provenAddresses, rules);
+
+    // Show requirements with status
+    msg += `**Requirements:**\n\n`;
+    msg += await formatRequirementsMessage(rules, result);
+
+    // Check if already satisfied
+    if (result.satisfied) {
+      msg += `\n✅ **All requirements satisfied!**\n`;
+      deletePendingKick(userId, groupId);
+      verificationState.delete(userId);
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+      await addUserToGroup(ctx, userId, groupId);
+      return;
+    }
+
+    // Show what's still needed
+    if (!result.nftSatisfied && !result.balanceSatisfied) {
+      msg += `\n_Need at least one NFT AND one balance condition._\n`;
+    } else if (!result.nftSatisfied) {
+      msg += `\n_Need at least one NFT condition._\n`;
+    } else if (!result.balanceSatisfied) {
+      msg += `\n_Need at least one balance condition._\n`;
+    }
+  } else {
+    // No verifications yet - show all requirements
+    msg += `**Requirements:**\n\n`;
+    msg += await formatRequirementsMessage(rules, null);
+  }
 
   msg += `\n**Choose verification method:**\n\n`;
   msg += `1️⃣ **WalletConnect** (recommended)\n`;
   msg += `   Send /wc to connect your wallet via QR code\n\n`;
   msg += `2️⃣ **Manual Signature**\n`;
-  msg += `   Send your BCH address that holds the NFT\n`;
-  msg += `   Example: \`bitcoincash:qr...\``;
+  msg += `   Send your BCH address\n`;
+  msg += `   Example: \`bitcoincash:qr...\`\n\n`;
+  msg += `_You can verify multiple addresses if your assets are spread across wallets._`;
 
   await ctx.reply(msg, { parse_mode: 'Markdown' });
+}
+
+// Helper to format requirements with status
+async function formatRequirementsMessage(
+  rules: AccessRule[],
+  checkResult: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>> | null
+): Promise<string> {
+  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  const balanceRules = rules.filter(r => r.rule_type === 'balance');
+
+  let msg = '';
+
+  if (nftRules.length > 0) {
+    msg += `**NFT** _(at least one)_\n`;
+
+    // Fetch metadata for all categories
+    const categories = [...new Set(nftRules.map(r => r.category).filter(Boolean))];
+    const metadataMap = new Map<string, any>();
+    for (const cat of categories) {
+      if (cat) {
+        metadataMap.set(cat, await fetchTokenMetadata(cat));
+      }
+    }
+
+    for (const rule of nftRules) {
+      const ruleResult = checkResult?.nftResults.find(r => r.rule.id === rule.id);
+      const satisfied = ruleResult?.satisfied ?? false;
+      const icon = satisfied ? '✅' : '⬜';
+      const metadata = rule.category ? metadataMap.get(rule.category) : null;
+      const displayName = rule.label || (rule.category ? formatTokenName(rule.category, metadata) : 'Unknown');
+
+      msg += `${icon} ${displayName}`;
+      if (rule.start_commitment && rule.end_commitment) {
+        msg += ` (\`${rule.start_commitment}\`-\`${rule.end_commitment}\`)`;
+      }
+      msg += `\n`;
+    }
+    msg += '\n';
+  }
+
+  if (balanceRules.length > 0) {
+    msg += `**Balance** _(at least one)_\n`;
+
+    for (const rule of balanceRules) {
+      const ruleResult = checkResult?.balanceResults.find(r => r.rule.id === rule.id);
+      const satisfied = ruleResult?.satisfied ?? false;
+      const icon = satisfied ? '✅' : '⬜';
+
+      let displayName: string;
+      if (rule.category?.toUpperCase() === 'BCH') {
+        const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
+        const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
+        displayName = rule.label || `${bchDisplay} BCH`;
+      } else {
+        const metadata = rule.category ? await fetchTokenMetadata(rule.category) : null;
+        const tokenName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
+        displayName = `${rule.min_amount} ${rule.label || tokenName}`;
+      }
+
+      msg += `${icon} ${displayName}\n`;
+    }
+    msg += '\n';
+  }
+
+  return msg;
 }
 
 // /wc - Start WalletConnect flow
@@ -407,90 +499,20 @@ async function handleWcVerification(
 
         const address = addressInfos[0].address;
 
-        // Check NFT ownership
-        const categories = getNftCategories(state.groupId);
-        const ownedNfts = await checkNftOwnership(address, categories);
+        // Get access rules and check this address + existing verifications
+        const rules = getAccessRules(state.groupId);
+        const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+        const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), address])];
+        const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-        if (ownedNfts.length === 0) {
-          // No NFT yet - store as pending verification
-          // Still need to verify address ownership via signature
-          state.address = address;
-          state.wcNft = null; // No NFT yet
-
-          // Request signature to prove address ownership
-          const challenge = createChallenge(userId, state.groupId, address);
-          const challengeMessage = generateChallengeMessage(
-            state.groupName,
-            state.groupId,
-            challenge.nonce
-          );
-          state.challenge = challenge;
-          state.challengeMessage = challengeMessage;
-
-          await ctx.reply(
-            '⏳ No qualifying NFTs found yet, but you can still verify your address.\n\n' +
-            '📝 Please approve the signature request to prove address ownership...'
-          );
-
-          try {
-            const signature = await requestSignMessage(userId, challengeMessage, address);
-
-            // Verify signature
-            const sigValid = await verifySignedMessage(challengeMessage, signature, address);
-            if (!sigValid) {
-              await ctx.reply('❌ Signature verification failed. Please try again with /wc');
-              deleteChallenge(challenge.id);
-              await disconnectSession(userId);
-              verificationState.delete(userId);
-              return;
-            }
-
-            // Store as pending verification (use empty string for nft_category due to NOT NULL constraint)
-            const username = ctx.from?.username || null;
-            addVerification(userId, username, state.groupId, '', null, address, 'pending');
-            await addAddressToMonitor(address);
-            deleteChallenge(challenge.id);
-            // Keep pending_kick - user is still pending
-
-            await ctx.reply(
-              '✅ **Address verified!**\n\n' +
-              `Your address \`${address.slice(0, 20)}...\` is now being monitored.\n\n` +
-              '⏳ You\'ll be automatically granted access when you receive a qualifying NFT.\n\n' +
-              'I\'ll DM you when that happens!',
-              { parse_mode: 'Markdown' }
-            );
-
-            await disconnectSession(userId);
-            verificationState.delete(userId);
-          } catch (error: any) {
-            console.error('Pending verification signature error:', error);
-            deleteChallenge(challenge.id);
-            await disconnectSession(userId);
-            verificationState.delete(userId);
-            await ctx.reply('❌ Signature failed. Please try again with /wc');
-          }
-          return;
-        }
-
-        const nft = ownedNfts[0];
-
-        // Check if this NFT is already bound to another user in this group
-        const existingBinding = getVerificationByNft(nft.category, nft.commitment, state.groupId);
-        if (existingBinding && existingBinding.telegram_user_id !== userId) {
-          await ctx.reply(
-            '❌ This NFT is already verified by another user in this group.\n\n' +
-            'Each NFT can only verify one Telegram account per group.'
-          );
-          await disconnectSession(userId);
-          verificationState.delete(userId);
-          return;
-        }
-
-        // Store address and NFT for potential retry
+        // Store address and any matching NFT for potential retry
         state.address = address;
-        state.wcNft = { category: nft.category, commitment: nft.commitment };
+        const nftMatch = result.nftResults.find(r => r.satisfied && r.matchingNft);
+        state.wcNft = nftMatch?.matchingNft
+          ? { category: nftMatch.matchingNft.category, commitment: nftMatch.matchingNft.commitment }
+          : null;
 
-        // Request signature for additional verification
+        // Request signature to prove address ownership
         const challenge = createChallenge(userId, state.groupId, address);
         const challengeMessage = generateChallengeMessage(
           state.groupName,
@@ -500,44 +522,89 @@ async function handleWcVerification(
         state.challenge = challenge;
         state.challengeMessage = challengeMessage;
 
-        await ctx.reply(
-          '📝 Please approve the signature request in your wallet to complete verification...'
-        );
+        await ctx.reply('📝 Please approve the signature request in your wallet...');
 
-        const signature = await requestSignMessage(userId, challengeMessage, address);
+        try {
+          const signature = await requestSignMessage(userId, challengeMessage, address);
 
-        // Verify signature
-        const sigValid = await verifySignedMessage(challengeMessage, signature, address);
-        if (!sigValid) {
-          await ctx.reply('❌ Signature verification failed. Please try again.');
+          // Verify signature
+          const sigValid = await verifySignedMessage(challengeMessage, signature, address);
+          if (!sigValid) {
+            await ctx.reply('❌ Signature verification failed. Please try again with /wc');
+            deleteChallenge(challenge.id);
+            await disconnectSession(userId);
+            verificationState.delete(userId);
+            return;
+          }
+
+          // Store verification
+          const username = ctx.from?.username || null;
+          const nft = state.wcNft;
+          addVerification(
+            userId,
+            username,
+            state.groupId,
+            nft?.category || '',
+            nft?.commitment ?? null,
+            address,
+            result.satisfied ? 'active' : 'pending'
+          );
+          await addAddressToMonitor(address);
           deleteChallenge(challenge.id);
           await disconnectSession(userId);
-          verificationState.delete(userId);
+
+          // Check if all requirements are met
+          if (result.satisfied) {
+            deletePendingKick(userId, state.groupId);
+
+            await ctx.reply(
+              '✅ **Verification successful!**\n\n' +
+              'All requirements satisfied!',
+              { parse_mode: 'Markdown' }
+            );
+
+            await addUserToGroup(ctx, userId, state.groupId);
+            verificationState.delete(userId);
+          } else {
+            // Show progress
+            let msg = '✅ **Address verified!**\n\n';
+            msg += `Address: \`${address.slice(0, 20)}...\`\n\n`;
+            msg += '**Condition Progress:**\n\n';
+            msg += await formatRequirementsMessage(rules, result);
+
+            // Show what's still needed
+            if (result.nftSatisfied && !result.balanceSatisfied) {
+              msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
+            } else if (!result.nftSatisfied && result.balanceSatisfied) {
+              msg += `_Balance requirement satisfied! Still need an NFT condition._\n\n`;
+            } else {
+              msg += `_Still need requirements - verify another address._\n\n`;
+            }
+
+            msg += `Prove another address via /wc or paste address, or /cancel.`;
+
+            await ctx.reply(msg, { parse_mode: 'Markdown' });
+            state.step = 'address';
+          }
+
+        } catch (error: any) {
+          console.error('WC signature error:', error);
+          deleteChallenge(challenge.id);
+
+          const isRejection = error?.message?.includes('rejected') || error?.message?.includes('Rejected') || error?.code === 5000;
+          if (isRejection) {
+            state.step = 'wc_sign_pending';
+            await ctx.reply(
+              '❌ Signature rejected.\n\n' +
+              'Send /sign to resend the request, or /wc to reconnect.'
+            );
+          } else {
+            await disconnectSession(userId);
+            state.step = 'address';
+            await ctx.reply('❌ Signature failed. Send /wc to try again.');
+          }
           return;
         }
-
-        // Success! Store verification
-        const username = ctx.from?.username || null;
-        addVerification(userId, username, state.groupId, nft.category, nft.commitment, address);
-        await addAddressToMonitor(address); // Start monitoring this address
-        deleteChallenge(challenge.id);
-        deletePendingKick(userId, state.groupId);
-
-        // Fetch metadata for nice display
-        const nftMetadata = await fetchTokenMetadata(nft.category);
-        const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
-
-        await ctx.reply(
-          '✅ **Verification successful!**\n\n' +
-          `NFT: ${nftDisplay}`,
-          { parse_mode: 'Markdown' }
-        );
-
-        // Try to add user back to group
-        await addUserToGroup(ctx, userId, state.groupId);
-
-        await disconnectSession(userId);
-        verificationState.delete(userId);
 
       } catch (error: any) {
         console.error('WC verification error:', error);
@@ -638,54 +705,20 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
     const address = text.startsWith('bitcoincash:') ? text : `bitcoincash:${text}`;
 
-    // Check NFT ownership
-    await ctx.reply('🔍 Checking NFT ownership...');
+    // Check access rules
+    await ctx.reply('🔍 Checking wallet...');
 
     try {
-      const categories = getNftCategories(state.groupId);
-      const ownedNfts = await checkNftOwnership(address, categories);
+      const rules = getAccessRules(state.groupId);
+      const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+      const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), address])];
+      const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-      if (ownedNfts.length === 0) {
-        // No NFT yet - offer to store as pending verification
-        // Still need to verify address ownership via signature
-        const challenge = createChallenge(userId, state.groupId, address);
-        const challengeMessage = generateChallengeMessage(
-          state.groupName,
-          state.groupId,
-          challenge.nonce
-        );
+      // Find matching NFT if any
+      const nftMatch = result.nftResults.find(r => r.satisfied && r.matchingNft);
+      const nft = nftMatch?.matchingNft;
 
-        state.step = 'signature';
-        state.challenge = challenge;
-        state.challengeMessage = challengeMessage;
-        state.address = address;
-        state.pendingMode = true; // Flag for pending verification
-
-        await ctx.reply(
-          '⏳ No qualifying NFTs found at this address yet.\n\n' +
-          'You can still verify your address now, and I\'ll **automatically grant access** when you receive a qualifying NFT.\n\n' +
-          '**Sign this message in your wallet:**\n\n' +
-          `\`\`\`\n${challengeMessage}\n\`\`\`\n\n` +
-          'In Electron Cash: Tools → Sign/verify message\n\n' +
-          'Then paste the **signature** here (base64 text).',
-          { parse_mode: 'Markdown' }
-        );
-        return;
-      }
-
-      const nft = ownedNfts[0];
-
-      // Check if this NFT is already bound in this group
-      const existingBinding = getVerificationByNft(nft.category, nft.commitment, state.groupId);
-      if (existingBinding && existingBinding.telegram_user_id !== userId) {
-        await ctx.reply(
-          '❌ This NFT is already verified by another user in this group.\n\n' +
-          'Each NFT can only verify one Telegram account per group.'
-        );
-        return;
-      }
-
-      // Create challenge
+      // Create challenge for signature verification
       const challenge = createChallenge(userId, state.groupId, address);
       const challengeMessage = generateChallengeMessage(
         state.groupName,
@@ -697,24 +730,32 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
       state.challenge = challenge;
       state.challengeMessage = challengeMessage;
       state.address = address;
+      state.pendingMode = !result.satisfied; // Pending if not all requirements met
+      state.wcNft = nft ? { category: nft.category, commitment: nft.commitment } : null;
 
-      // Fetch metadata for nice display
-      const nftMetadata = await fetchTokenMetadata(nft.category);
-      const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
+      let msg = '';
+      if (result.satisfied) {
+        msg = `✅ **Requirements satisfied!**\n\n`;
+      } else if (nft) {
+        const nftMetadata = await fetchTokenMetadata(nft.category);
+        const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
+        msg = `✅ NFT found: ${nftDisplay}\n\n`;
+        msg += `_Some requirements still not met - you can add more addresses after._\n\n`;
+      } else {
+        msg = `⏳ No qualifying NFTs found at this address yet.\n\n`;
+        msg += `You can still verify now. I'll monitor your address and grant access when requirements are met.\n\n`;
+      }
 
-      await ctx.reply(
-        `✅ NFT found: ${nftDisplay}\n\n` +
-        `Now I need to verify you own this address.\n\n` +
-        `**Sign this message in your wallet:**\n\n` +
-        `\`\`\`\n${challengeMessage}\n\`\`\`\n\n` +
-        `In Electron Cash: Tools → Sign/verify message\n\n` +
-        `Then paste the **signature** here (base64 text).`,
-        { parse_mode: 'Markdown' }
-      );
+      msg += `**Sign this message in your wallet:**\n\n`;
+      msg += `\`\`\`\n${challengeMessage}\n\`\`\`\n\n`;
+      msg += `In Electron Cash: Tools → Sign/verify message\n\n`;
+      msg += `Then paste the **signature** here (base64 text).`;
+
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
 
     } catch (error) {
-      console.error('NFT check error:', error);
-      await ctx.reply('❌ Error checking NFT ownership. Please try again later.');
+      console.error('Wallet check error:', error);
+      await ctx.reply('❌ Error checking wallet. Please try again later.');
     }
 
   } else if (state.step === 'signature') {
@@ -742,61 +783,62 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
       return;
     }
 
-    // Check if this is a pending mode verification (no NFT yet)
-    if (state.pendingMode) {
-      // Store as pending verification (use empty string for nft_category due to NOT NULL constraint)
-      const username = ctx.from?.username || null;
-      addVerification(userId, username, state.groupId, '', null, state.address, 'pending');
-      addAddressToMonitor(state.address);
-      deleteChallenge(state.challenge.id);
-      // Keep pending_kick - user is still pending
+    // Re-check access rules to determine status
+    const rules = getAccessRules(state.groupId);
+    const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+    const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), state.address])];
+    const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-      await ctx.reply(
-        '✅ **Address verified!**\n\n' +
-        `Your address \`${state.address.slice(0, 20)}...\` is now being monitored.\n\n` +
-        '⏳ You\'ll be automatically granted access when you receive a qualifying NFT.\n\n' +
-        'I\'ll DM you when that happens!',
-        { parse_mode: 'Markdown' }
-      );
-
-      verificationState.delete(userId);
-      return;
-    }
-
-    // Get the NFT info again (normal flow with NFT)
-    const categories = getNftCategories(state.groupId);
-    const ownedNfts = await checkNftOwnership(state.address, categories);
-
-    if (ownedNfts.length === 0) {
-      await ctx.reply('❌ NFT no longer found at this address. Please start over with /verify');
-      deleteChallenge(state.challenge.id);
-      verificationState.delete(userId);
-      return;
-    }
-
-    const nft = ownedNfts[0];
+    // Get NFT for this address if any
+    const nftMatch = result.nftResults.find(r => r.satisfied && r.matchingNft);
+    const nft = nftMatch?.matchingNft || state.wcNft;
 
     // Store verification
     const username = ctx.from?.username || null;
-    addVerification(userId, username, state.groupId, nft.category, nft.commitment, state.address);
-    await addAddressToMonitor(state.address); // Start monitoring this address
-    deleteChallenge(state.challenge.id);
-    deletePendingKick(userId, state.groupId);
-
-    // Fetch metadata for nice display
-    const nftMetadata = await fetchTokenMetadata(nft.category);
-    const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
-
-    await ctx.reply(
-      '✅ **Verification successful!**\n\n' +
-      `NFT: ${nftDisplay}`,
-      { parse_mode: 'Markdown' }
+    addVerification(
+      userId,
+      username,
+      state.groupId,
+      nft?.category || '',
+      nft?.commitment ?? null,
+      state.address,
+      result.satisfied ? 'active' : 'pending'
     );
+    await addAddressToMonitor(state.address);
+    deleteChallenge(state.challenge.id);
 
-    // Try to add user back to group
-    await addUserToGroup(ctx, userId, state.groupId);
+    if (result.satisfied) {
+      // All requirements met!
+      deletePendingKick(userId, state.groupId);
 
-    verificationState.delete(userId);
+      await ctx.reply(
+        '✅ **Verification successful!**\n\n' +
+        'All requirements satisfied!',
+        { parse_mode: 'Markdown' }
+      );
+
+      await addUserToGroup(ctx, userId, state.groupId);
+      verificationState.delete(userId);
+    } else {
+      // Show progress
+      let msg = '✅ **Address verified!**\n\n';
+      msg += `Address: \`${state.address.slice(0, 20)}...\`\n\n`;
+      msg += '**Condition Progress:**\n\n';
+      msg += await formatRequirementsMessage(rules, result);
+
+      if (result.nftSatisfied && !result.balanceSatisfied) {
+        msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
+      } else if (!result.nftSatisfied && result.balanceSatisfied) {
+        msg += `_Balance requirement satisfied! Still need an NFT condition._\n\n`;
+      } else {
+        msg += `_I'll monitor your address and grant access when requirements are met._\n\n`;
+      }
+
+      msg += `You can verify another address via /wc or paste address, or /cancel.`;
+
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+      state.step = 'address'; // Allow adding more addresses
+    }
   }
 });
 
@@ -880,6 +922,7 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
 
   const group = getGroup(verification.group_id);
   const groupName = group?.name || `Group ${verification.group_id}`;
+  const groupId = verification.group_id;
   const address = verification.bch_address;
 
   // Delete the verification
@@ -892,10 +935,56 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
     removeAddressFromMonitor(address);
   }
 
+  // Check if user still qualifies for the group with remaining verifications
+  const remainingVerifications = getVerificationsForMonitoring().filter(
+    v => v.telegram_user_id === userId && v.group_id === groupId
+  );
+
+  let restrictedMsg = '';
+  if (remainingVerifications.length > 0) {
+    // User has other verifications - check if they still qualify
+    const rules = getAccessRules(groupId);
+    if (rules.length > 0) {
+      const addresses = [...new Set(remainingVerifications.map(v => v.bch_address))];
+      const result = await checkAccessRulesMultiAddress(addresses, rules);
+
+      if (!result.satisfied) {
+        // User no longer qualifies - restrict them and set remaining to pending
+        try {
+          await ctx.api.restrictChatMember(groupId, userId, {
+            permissions: { can_send_messages: false }
+          });
+          // Set remaining verifications to pending
+          for (const v of remainingVerifications) {
+            updateVerificationStatus(v.id, 'pending');
+          }
+          // Add pending kick to prevent group message spam
+          addPendingKick(userId, groupId);
+          restrictedMsg = `\n\n⚠️ You no longer meet the access conditions for this group and have been restricted.`;
+        } catch (e) {
+          // May fail if bot doesn't have permission or user left
+        }
+      }
+    }
+  } else {
+    // No more verifications for this group - restrict user
+    try {
+      await ctx.api.restrictChatMember(groupId, userId, {
+        permissions: { can_send_messages: false }
+      });
+      // Add pending kick to prevent group message spam
+      addPendingKick(userId, groupId);
+      restrictedMsg = `\n\n⚠️ You no longer have any verified addresses for this group and have been restricted.`;
+    } catch (e) {
+      // May fail if bot doesn't have permission or user left
+    }
+  }
+
   await ctx.reply(
     `✅ Verification removed:\n\n` +
     `Group: ${groupName}\n` +
-    `Address: ${address.slice(0, 25)}...`
+    `Address: ${address.slice(0, 25)}...` +
+    restrictedMsg
   );
 });
 

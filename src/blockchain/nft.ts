@@ -1,5 +1,6 @@
 import { ElectrumNetworkProvider } from 'mainnet-js';
 import { getProvider } from './wallet.js';
+import type { AccessRule } from '../storage/types.js';
 
 export interface TokenUtxo {
   txid: string;
@@ -114,4 +115,218 @@ export async function isNftAtAddress(
 export function isValidCategoryId(category: string): boolean {
   // Category ID is a 32-byte (64 hex chars) transaction ID
   return /^[a-fA-F0-9]{64}$/.test(category);
+}
+
+// ============ Commitment Range Comparison ============
+
+/**
+ * Compare two hex commitment strings numerically
+ * Returns -1 if a < b, 0 if a == b, 1 if a > b
+ */
+export function compareCommitments(a: string, b: string): number {
+  const normalize = (s: string) => s.toLowerCase().replace(/^0x/, '');
+  const aNorm = normalize(a);
+  const bNorm = normalize(b);
+  const maxLen = Math.max(aNorm.length, bNorm.length);
+  const aNum = BigInt('0x' + aNorm.padStart(maxLen, '0'));
+  const bNum = BigInt('0x' + bNorm.padStart(maxLen, '0'));
+  return aNum < bNum ? -1 : aNum > bNum ? 1 : 0;
+}
+
+/**
+ * Check if a commitment falls within a range (inclusive)
+ */
+export function isCommitmentInRange(
+  commitment: string | null,
+  start: string | null,
+  end: string | null
+): boolean {
+  // No range specified = all commitments match
+  if (!start && !end) return true;
+  // Range specified but no commitment = no match
+  if (!commitment) return false;
+  // Check bounds
+  if (start && compareCommitments(commitment, start) < 0) return false;
+  if (end && compareCommitments(commitment, end) > 0) return false;
+  return true;
+}
+
+// ============ Balance and NFT Info ============
+
+export interface AddressBalanceInfo {
+  bchSatoshis: bigint;
+  fungibleTokens: Map<string, bigint>;  // category -> amount
+  nfts: OwnedNft[];
+}
+
+/**
+ * Get complete balance info for an address: BCH satoshis, fungible tokens, and NFTs
+ */
+export async function getAddressBalanceInfo(address: string): Promise<AddressBalanceInfo> {
+  const provider = await getProvider();
+
+  try {
+    const utxos = await provider.getUtxos(address);
+
+    let bchSatoshis = 0n;
+    const fungibleTokens = new Map<string, bigint>();
+    const nfts: OwnedNft[] = [];
+
+    for (const utxo of utxos as any[]) {
+      // Add BCH value
+      bchSatoshis += BigInt(utxo.satoshis);
+
+      if (utxo.token) {
+        const category = utxo.token.category.toLowerCase();
+
+        if (utxo.token.nft) {
+          // NFT
+          nfts.push({
+            category: utxo.token.category,
+            commitment: utxo.token.nft.commitment || null,
+            txid: utxo.txid,
+            vout: utxo.vout,
+          });
+        } else if (utxo.token.amount) {
+          // Fungible token
+          const amount = BigInt(utxo.token.amount);
+          const current = fungibleTokens.get(category) || 0n;
+          fungibleTokens.set(category, current + amount);
+        }
+      }
+    }
+
+    return { bchSatoshis, fungibleTokens, nfts };
+  } catch (error) {
+    console.error(`Error fetching balance info for ${address}:`, error);
+    throw error;
+  }
+}
+
+// ============ Access Rule Checking ============
+
+export interface NftRuleResult {
+  satisfied: boolean;
+  rule: AccessRule;
+  matchingNft?: OwnedNft;
+}
+
+export interface BalanceRuleResult {
+  satisfied: boolean;
+  rule: AccessRule;
+  actualAmount?: bigint;
+}
+
+export interface AccessRulesCheckResult {
+  satisfied: boolean;        // Overall: AND logic between rule types
+  nftSatisfied: boolean;     // At least one NFT rule satisfied (OR logic)
+  balanceSatisfied: boolean; // At least one balance rule satisfied (OR logic)
+  nftResults: NftRuleResult[];
+  balanceResults: BalanceRuleResult[];
+}
+
+/**
+ * Check access rules against an address
+ * - NFT rules: OR logic - at least one must be satisfied
+ * - Balance rules: OR logic - at least one must be satisfied
+ * - Between types: AND logic - if both types exist, must satisfy at least one of each
+ */
+export async function checkAccessRules(
+  address: string,
+  rules: AccessRule[]
+): Promise<AccessRulesCheckResult> {
+  const info = await getAddressBalanceInfo(address);
+
+  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  const balanceRules = rules.filter(r => r.rule_type === 'balance');
+
+  // Check NFT rules (OR logic - at least one must pass)
+  const nftResults: NftRuleResult[] = nftRules.map(rule => {
+    const match = info.nfts.find(nft =>
+      nft.category.toLowerCase() === rule.category?.toLowerCase() &&
+      isCommitmentInRange(nft.commitment, rule.start_commitment, rule.end_commitment)
+    );
+    return { satisfied: !!match, rule, matchingNft: match };
+  });
+  const nftSatisfied = nftRules.length === 0 || nftResults.some(r => r.satisfied);
+
+  // Check balance rules (OR logic - at least one must pass)
+  const balanceResults: BalanceRuleResult[] = balanceRules.map(rule => {
+    const minAmount = BigInt(rule.min_amount || '0');
+    let actualAmount: bigint;
+
+    if (rule.category?.toUpperCase() === 'BCH') {
+      actualAmount = info.bchSatoshis;
+    } else {
+      actualAmount = info.fungibleTokens.get(rule.category?.toLowerCase() || '') || 0n;
+    }
+
+    return { satisfied: actualAmount >= minAmount, rule, actualAmount };
+  });
+  const balanceSatisfied = balanceRules.length === 0 || balanceResults.some(r => r.satisfied);
+
+  // AND between types
+  const satisfied = nftSatisfied && balanceSatisfied;
+
+  return { satisfied, nftSatisfied, balanceSatisfied, nftResults, balanceResults };
+}
+
+/**
+ * Check access rules against multiple addresses (combines results)
+ * - NFT rules: OR logic across all addresses
+ * - Balance rules: OR logic across all addresses
+ * - Between types: AND logic
+ */
+export async function checkAccessRulesMultiAddress(
+  addresses: string[],
+  rules: AccessRule[]
+): Promise<AccessRulesCheckResult> {
+  if (addresses.length === 0) {
+    return {
+      satisfied: false,
+      nftSatisfied: rules.filter(r => r.rule_type === 'nft').length === 0,
+      balanceSatisfied: rules.filter(r => r.rule_type === 'balance').length === 0,
+      nftResults: [],
+      balanceResults: [],
+    };
+  }
+
+  // Check each address
+  const results = await Promise.all(addresses.map(addr => checkAccessRules(addr, rules)));
+
+  // Combine NFT results - take first satisfied result for each rule, or any result if none satisfied
+  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  const nftResults: NftRuleResult[] = nftRules.map(rule => {
+    // Find first address that satisfies this rule
+    for (const result of results) {
+      const ruleResult = result.nftResults.find(r => r.rule.id === rule.id);
+      if (ruleResult?.satisfied) return ruleResult;
+    }
+    // Not satisfied by any address - return first result
+    for (const result of results) {
+      const ruleResult = result.nftResults.find(r => r.rule.id === rule.id);
+      if (ruleResult) return ruleResult;
+    }
+    return { satisfied: false, rule };
+  });
+
+  // Combine balance results similarly
+  const balanceRules = rules.filter(r => r.rule_type === 'balance');
+  const balanceResults: BalanceRuleResult[] = balanceRules.map(rule => {
+    for (const result of results) {
+      const ruleResult = result.balanceResults.find(r => r.rule.id === rule.id);
+      if (ruleResult?.satisfied) return ruleResult;
+    }
+    for (const result of results) {
+      const ruleResult = result.balanceResults.find(r => r.rule.id === rule.id);
+      if (ruleResult) return ruleResult;
+    }
+    return { satisfied: false, rule };
+  });
+
+  const nftSatisfied = nftRules.length === 0 || nftResults.some(r => r.satisfied);
+  const balanceSatisfied = balanceRules.length === 0 || balanceResults.some(r => r.satisfied);
+  const satisfied = nftSatisfied && balanceSatisfied;
+
+  return { satisfied, nftSatisfied, balanceSatisfied, nftResults, balanceResults };
 }

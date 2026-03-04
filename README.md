@@ -31,12 +31,38 @@ Just add it to your group and configure your NFT categories.
 | Command | Description |
 |---------|-------------|
 | `/setup` | Initialize the bot for your group |
-| `/add_category <id>` | Add an NFT category for access |
-| `/remove_category <id>` | Remove an NFT category |
-| `/list_categories` | List configured NFT categories |
+| `/add_condition nft <cat> [label] [start] [end]` | Add NFT requirement with optional commitment range |
+| `/add_condition balance <cat\|BCH> <amount> [label]` | Add token or BCH balance requirement |
+| `/list_conditions` | List all access conditions with IDs |
+| `/remove_condition <id>` | Remove a condition by ID |
 | `/status` | Show group configuration and bot permissions |
-| `/scan` | Re-check all verified members (kicks those who no longer hold NFTs) |
+| `/scan` | Re-check all verified members |
 | `/adminhelp` | Show admin command help |
+
+**Legacy commands** (still work):
+- `/add_category <id>` - Add NFT category (no commitment range)
+- `/remove_category <id>` - Remove NFT category
+- `/list_categories` - List NFT categories
+
+### Access Rules
+
+Access rules determine who can join your group:
+
+- **NFT rules**: Require ownership of an NFT, optionally with a specific commitment range
+- **Balance rules**: Require a minimum amount of a fungible token or BCH
+
+**Logic:**
+- NFT rules: OR logic - user must satisfy **at least one** NFT rule
+- Balance rules: OR logic - user must satisfy **at least one** balance rule
+- Between types: AND logic - if both types exist, user must satisfy at least one of each
+
+**Examples:**
+```
+/add_condition nft abc123...                    # Any NFT from category
+/add_condition nft abc123... Jessicas 01 64     # Commitments 01-64 named "Jessicas"
+/add_condition balance BCH 21                   # Require 21 BCH
+/add_condition balance def456... 1000 FURU      # Require 1000 FURU tokens
+```
 
 ### How It Works
 

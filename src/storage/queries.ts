@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { config } from '../config.js';
-import type { Group, Verification, Challenge, PendingKick, TokenMetadata } from './types.js';
+import type { Group, Verification, Challenge, PendingKick, TokenMetadata, AccessRule, AccessRuleType } from './types.js';
 import crypto from 'crypto';
 
 // ============ Groups ============
@@ -20,27 +20,91 @@ export function deleteGroup(id: number): void {
   db.prepare('DELETE FROM groups WHERE id = ?').run(id);
 }
 
-// ============ NFT Categories ============
+// ============ NFT Categories (legacy - use addAccessRule for new code) ============
 
 export function addNftCategory(groupId: number, category: string): void {
+  // Add as NFT rule without range constraints (backwards compatible)
   db.prepare(`
-    INSERT OR IGNORE INTO group_nft_categories (group_id, category) VALUES (?, ?)
+    INSERT OR IGNORE INTO group_access_rules (group_id, rule_type, category)
+    VALUES (?, 'nft', ?)
   `).run(groupId, category);
 }
 
 export function removeNftCategory(groupId: number, category: string): void {
-  db.prepare('DELETE FROM group_nft_categories WHERE group_id = ? AND category = ?')
-    .run(groupId, category);
+  // Remove NFT rules for this category (removes all ranges)
+  db.prepare(`
+    DELETE FROM group_access_rules
+    WHERE group_id = ? AND rule_type = 'nft' AND category = ?
+  `).run(groupId, category);
+}
+
+// ============ Access Rules ============
+
+export function addAccessRule(
+  groupId: number,
+  ruleType: AccessRuleType,
+  category: string | null,
+  options?: {
+    startCommitment?: string;
+    endCommitment?: string;
+    minAmount?: string;
+    label?: string;
+  }
+): number {
+  const result = db.prepare(`
+    INSERT INTO group_access_rules (group_id, rule_type, category, start_commitment, end_commitment, min_amount, label)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    groupId,
+    ruleType,
+    category,
+    options?.startCommitment ?? null,
+    options?.endCommitment ?? null,
+    options?.minAmount ?? null,
+    options?.label ?? null
+  );
+  return result.lastInsertRowid as number;
+}
+
+export function getAccessRules(groupId: number): AccessRule[] {
+  return db.prepare(`
+    SELECT * FROM group_access_rules WHERE group_id = ? ORDER BY rule_type, id
+  `).all(groupId) as AccessRule[];
+}
+
+export function getAccessRuleById(id: number): AccessRule | undefined {
+  return db.prepare('SELECT * FROM group_access_rules WHERE id = ?')
+    .get(id) as AccessRule | undefined;
+}
+
+export function removeAccessRule(id: number): boolean {
+  const result = db.prepare('DELETE FROM group_access_rules WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+export function getAccessRulesForGroup(groupId: number, ruleType?: AccessRuleType): AccessRule[] {
+  if (ruleType) {
+    return db.prepare(`
+      SELECT * FROM group_access_rules WHERE group_id = ? AND rule_type = ? ORDER BY id
+    `).all(groupId, ruleType) as AccessRule[];
+  }
+  return db.prepare(`
+    SELECT * FROM group_access_rules WHERE group_id = ? ORDER BY rule_type, id
+  `).all(groupId) as AccessRule[];
 }
 
 export function getNftCategories(groupId: number): string[] {
-  const rows = db.prepare('SELECT category FROM group_nft_categories WHERE group_id = ?')
-    .all(groupId) as { category: string }[];
+  // Query from new access rules table - returns unique categories from NFT rules
+  const rows = db.prepare(`
+    SELECT DISTINCT category FROM group_access_rules
+    WHERE group_id = ? AND rule_type = 'nft' AND category IS NOT NULL
+  `).all(groupId) as { category: string }[];
   return rows.map(r => r.category);
 }
 
 export function isGroupConfigured(groupId: number): boolean {
-  const result = db.prepare('SELECT 1 FROM group_nft_categories WHERE group_id = ? LIMIT 1')
+  // Check if group has any access rules configured
+  const result = db.prepare('SELECT 1 FROM group_access_rules WHERE group_id = ? LIMIT 1')
     .get(groupId);
   return !!result;
 }

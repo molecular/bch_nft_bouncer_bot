@@ -48,3 +48,18 @@ export interface TokenMetadata {
   decimals: number | null;
   fetched_at: string;
 }
+
+// Access rule types for gating group access
+export type AccessRuleType = 'nft' | 'balance';
+
+export interface AccessRule {
+  id: number;
+  group_id: number;
+  rule_type: AccessRuleType;
+  category: string | null;        // Token category ID, or 'BCH' for BCH balance
+  start_commitment: string | null; // Hex, inclusive (nft with range only)
+  end_commitment: string | null;   // Hex, inclusive (nft with range only)
+  min_amount: string | null;       // BigInt as string (balance rules only)
+  label: string | null;            // Human-readable (e.g., "Jessicas", "21 BCH Club")
+  created_at: string;
+}

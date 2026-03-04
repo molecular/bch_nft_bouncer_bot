@@ -202,16 +202,25 @@ joinHandlers.on('message', async (ctx: Context, next) => {
   // Unverified user posted - delete message and remind them
   console.log(`Unverified user ${userId} posted in gated group ${chatId}, deleting message`);
 
-  const username = ctx.from?.username
-    ? `@${ctx.from.username}`
-    : ctx.from?.first_name || 'User';
-
-  const botUsername = ctx.me.username;
-  const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
+  // Check if we already know about this user (they have a pending kick)
+  const existingPendingKick = getPendingKick(userId, chatId);
 
   try {
     // Delete the message
     await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
+
+    // If we already have a pending kick, just delete - don't spam the group
+    if (existingPendingKick) {
+      console.log(`[join] User ${userId} already has pending kick, skipping group message`);
+      return;
+    }
+
+    const username = ctx.from?.username
+      ? `@${ctx.from.username}`
+      : ctx.from?.first_name || 'User';
+
+    const botUsername = ctx.me.username;
+    const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
 
     // Restrict user (in case they weren't already)
     await restrictUser(ctx.api, chatId, userId);

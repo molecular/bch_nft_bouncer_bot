@@ -2,17 +2,17 @@ import { Context, Composer } from 'grammy';
 import { requireGroupAdmin, checkBotPermissions } from '../middleware/auth.js';
 import {
   upsertGroup,
-  addNftCategory,
-  removeNftCategory,
-  getNftCategories,
   isGroupConfigured,
   getGroup,
-  getVerificationsForMonitoring,
-  deleteVerification,
+  addAccessRule,
+  getAccessRules,
+  getAccessRuleById,
+  removeAccessRule,
 } from '../../storage/queries.js';
-import { isValidCategoryId, checkNftOwnership } from '../../blockchain/nft.js';
+import { isValidCategoryId } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
 import { checkGroupVerifications } from '../../blockchain/monitor.js';
+import type { AccessRule } from '../../storage/types.js';
 
 export const adminHandlers = new Composer();
 
@@ -63,27 +63,27 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
   );
 });
 
-// /add_category <category> - Add NFT category for group access
-adminHandlers.command('add_category', requireGroupAdmin, async (ctx: Context) => {
+// ============ Access Condition Commands ============
+
+// /add_condition nft <category> [label] [start] [end]
+// /add_condition balance <category|BCH> <min_amount> [label]
+adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) => {
   const chatId = ctx.chat?.type === 'private' ? null : ctx.chat?.id;
-  const args = ctx.match as string;
+  const args = (ctx.match as string || '').trim();
 
   if (!args) {
     await ctx.reply(
-      'Usage: /add_category <category_id>\n\n' +
-      'The category ID is a 64-character hex string (transaction ID of the NFT genesis).\n\n' +
-      'Example:\n' +
-      '/add_category 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-    );
-    return;
-  }
-
-  const category = args.trim().toLowerCase();
-
-  if (!isValidCategoryId(category)) {
-    await ctx.reply(
-      '❌ Invalid category ID format.\n\n' +
-      'Category ID must be a 64-character hexadecimal string.'
+      '**Usage:**\n\n' +
+      '`/add_condition nft <category> [label] [start] [end]`\n' +
+      '  Add NFT requirement with optional commitment range\n\n' +
+      '`/add_condition balance <amount> <BCH|category>`\n' +
+      '  Add balance requirement (BCH or token)\n\n' +
+      '**Examples:**\n' +
+      '`/add_condition nft abc123...`\n' +
+      '`/add_condition nft abc123... Jessicas 01 64`\n' +
+      '`/add_condition balance 21 BCH`\n' +
+      '`/add_condition balance 1000 def456...`',
+      { parse_mode: 'Markdown' }
     );
     return;
   }
@@ -99,60 +99,163 @@ adminHandlers.command('add_category', requireGroupAdmin, async (ctx: Context) =>
     return;
   }
 
-  addNftCategory(chatId!, category);
+  const parts = args.split(/\s+/);
+  const ruleType = parts[0]?.toLowerCase();
 
-  const categories = getNftCategories(chatId!);
+  if (ruleType === 'nft') {
+    // /add_condition nft <category> [label] [start] [end]
+    if (parts.length < 2) {
+      await ctx.reply('Usage: `/add_condition nft <category> [label] [start] [end]`', { parse_mode: 'Markdown' });
+      return;
+    }
 
-  // Fetch metadata for nice display
-  const metadata = await fetchTokenMetadata(category);
-  const displayName = formatTokenName(category, metadata);
+    const category = parts[1].toLowerCase();
+    if (!isValidCategoryId(category)) {
+      await ctx.reply('Invalid category ID. Must be a 64-character hex string.');
+      return;
+    }
 
-  await ctx.reply(
-    `✅ NFT category added!\n\n` +
-    `Token: ${displayName}\n` +
-    `Category: \`${category}\`\n\n` +
-    `This group now accepts ${categories.length} NFT categor${categories.length === 1 ? 'y' : 'ies'} for verification.`,
-    { parse_mode: 'Markdown' }
-  );
-});
+    let label: string | undefined;
+    let startCommitment: string | undefined;
+    let endCommitment: string | undefined;
 
-// /remove_category <category> - Remove NFT category
-adminHandlers.command('remove_category', requireGroupAdmin, async (ctx: Context) => {
-  const chatId = ctx.chat?.type === 'private' ? null : ctx.chat?.id;
-  const args = ctx.match as string;
+    // Parse optional arguments
+    if (parts.length >= 3) {
+      // Check if third part looks like a hex commitment (short) or a label
+      if (parts.length >= 4 && /^[0-9a-fA-F]+$/.test(parts[2]) && /^[0-9a-fA-F]+$/.test(parts[3])) {
+        // Format: nft <category> <start> <end>
+        startCommitment = parts[2].toLowerCase();
+        endCommitment = parts[3].toLowerCase();
+      } else if (parts.length >= 5 && /^[0-9a-fA-F]+$/.test(parts[3]) && /^[0-9a-fA-F]+$/.test(parts[4])) {
+        // Format: nft <category> <label> <start> <end>
+        label = parts[2];
+        startCommitment = parts[3].toLowerCase();
+        endCommitment = parts[4].toLowerCase();
+      } else if (parts.length === 3) {
+        // Format: nft <category> <label>
+        label = parts[2];
+      }
+    }
 
-  if (!args) {
-    await ctx.reply('Usage: /remove_category <category_id>');
-    return;
-  }
+    try {
+      const ruleId = addAccessRule(chatId!, 'nft', category, {
+        startCommitment,
+        endCommitment,
+        label,
+      });
 
-  if (ctx.chat?.type === 'private') {
-    await ctx.reply('This command must be used in a group.');
-    return;
-  }
+      // Fetch metadata for display
+      const metadata = await fetchTokenMetadata(category);
+      const displayName = formatTokenName(category, metadata);
 
-  const category = args.trim().toLowerCase();
-  removeNftCategory(chatId!, category);
+      let msg = `✅ NFT condition added (ID: ${ruleId})\n\n`;
+      msg += `**Token:** ${displayName}\n`;
+      if (label) msg += `**Label:** ${label}\n`;
+      if (startCommitment && endCommitment) {
+        msg += `**Range:** \`${startCommitment}\` - \`${endCommitment}\`\n`;
+      }
 
-  await ctx.reply(`✅ NFT category removed. Checking affected verifications...`);
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (error: any) {
+      if (error.message?.includes('UNIQUE constraint')) {
+        await ctx.reply('This condition already exists.');
+      } else {
+        console.error('Error adding NFT condition:', error);
+        await ctx.reply('Failed to add condition.');
+      }
+    }
 
-  // Immediately check all verifications for this group
-  const result = await checkGroupVerifications(chatId!);
+  } else if (ruleType === 'balance') {
+    // /add_condition balance <amount> <BCH|category_id>
+    if (parts.length < 3) {
+      await ctx.reply('Usage: `/add_condition balance <amount> <BCH|category_id>`', { parse_mode: 'Markdown' });
+      return;
+    }
 
-  if (result.checked === 0) {
-    await ctx.reply(`No verifications to check.`);
+    const amountArg = parts[1];
+    const categoryArg = parts[2];
+
+    let category: string;
+    let minAmount: string;
+    let autoLabel: string | undefined;
+
+    if (categoryArg.toUpperCase() === 'BCH') {
+      category = 'BCH';
+      // Amount is in BCH, convert to satoshis
+      const bchAmount = parseFloat(amountArg);
+      if (isNaN(bchAmount) || bchAmount <= 0) {
+        await ctx.reply('Invalid BCH amount. Must be a positive number.');
+        return;
+      }
+      minAmount = (BigInt(Math.round(bchAmount * 100000000))).toString();
+      // Auto-generate label for BCH
+      const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
+      autoLabel = `${bchDisplay} BCH`;
+    } else {
+      // Fungible token
+      if (!isValidCategoryId(categoryArg)) {
+        await ctx.reply('Invalid category ID. Must be a 64-character hex string or "BCH".');
+        return;
+      }
+      category = categoryArg.toLowerCase();
+
+      // Amount is in base units
+      try {
+        minAmount = BigInt(amountArg).toString();
+        if (BigInt(minAmount) <= 0n) throw new Error('non-positive');
+      } catch {
+        await ctx.reply('Invalid amount. Must be a positive integer.');
+        return;
+      }
+
+      // Auto-generate label from token metadata
+      const metadata = await fetchTokenMetadata(category);
+      if (metadata?.symbol) {
+        autoLabel = `${minAmount} ${metadata.symbol}`;
+      } else if (metadata?.name) {
+        autoLabel = `${minAmount} ${metadata.name}`;
+      }
+    }
+
+    try {
+      const ruleId = addAccessRule(chatId!, 'balance', category, {
+        minAmount,
+        label: autoLabel,
+      });
+
+      let msg = `✅ Balance condition added (ID: ${ruleId})\n\n`;
+      if (category === 'BCH') {
+        const bchDisplay = (Number(minAmount) / 100000000).toFixed(8).replace(/\.?0+$/, '');
+        msg += `**Requirement:** ${bchDisplay} BCH\n`;
+      } else {
+        const metadata = await fetchTokenMetadata(category);
+        const displayName = formatTokenName(category, metadata);
+        msg += `**Token:** ${displayName}\n`;
+        msg += `**Minimum:** ${minAmount}\n`;
+      }
+      if (autoLabel) msg += `**Label:** ${autoLabel}\n`;
+
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+    } catch (error: any) {
+      if (error.message?.includes('UNIQUE constraint')) {
+        await ctx.reply('This condition already exists.');
+      } else {
+        console.error('Error adding balance condition:', error);
+        await ctx.reply('Failed to add condition.');
+      }
+    }
+
   } else {
-    let msg = `Verification check complete:\n`;
-    msg += `• Checked: ${result.checked}\n`;
-    msg += `• Valid: ${result.valid}\n`;
-    if (result.switched > 0) msg += `• Switched to different NFT: ${result.switched}\n`;
-    if (result.invalid > 0) msg += `• Removed (no qualifying NFT): ${result.invalid}`;
-    await ctx.reply(msg);
+    await ctx.reply(
+      'Unknown condition type. Use:\n' +
+      '`/add_condition nft ...` or `/add_condition balance ...`',
+      { parse_mode: 'Markdown' }
+    );
   }
 });
 
-// /list_categories - List configured NFT categories (available to all users)
-adminHandlers.command('list_categories', async (ctx: Context) => {
+// /list_conditions - List all access rules
+adminHandlers.command('list_conditions', async (ctx: Context) => {
   if (ctx.chat?.type === 'private') {
     await ctx.reply('This command must be used in a group.');
     return;
@@ -162,29 +265,127 @@ adminHandlers.command('list_categories', async (ctx: Context) => {
   const group = getGroup(chatId);
 
   if (!group) {
-    await ctx.reply('This group is not set up for NFT verification.');
+    await ctx.reply('This group is not set up for wallet verification.');
     return;
   }
 
-  const categories = getNftCategories(chatId);
+  const rules = getAccessRules(chatId);
 
-  if (categories.length === 0) {
-    await ctx.reply('No NFT categories configured for this group.');
+  if (rules.length === 0) {
+    await ctx.reply('No access conditions configured for this group.\n\nUse `/add_condition` to add one.', { parse_mode: 'Markdown' });
     return;
   }
 
-  // Fetch metadata for all categories
-  const metadataPromises = categories.map(cat => fetchTokenMetadata(cat));
-  const metadataResults = await Promise.all(metadataPromises);
+  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  const balanceRules = rules.filter(r => r.rule_type === 'balance');
 
-  let msg = `**NFT Categories (${categories.length}):**\n\n`;
-  categories.forEach((cat, i) => {
-    const displayName = formatTokenName(cat, metadataResults[i]);
-    msg += `${i + 1}. ${displayName}\n`;
-    msg += `   \`${cat}\`\n\n`;
-  });
+  let msg = '**Access Conditions:**\n\n';
+
+  if (nftRules.length > 0) {
+    msg += '**NFT** _(at least one required)_\n';
+
+    // Fetch metadata for all categories
+    const categories = [...new Set(nftRules.map(r => r.category).filter(Boolean))];
+    const metadataMap = new Map<string, any>();
+    for (const cat of categories) {
+      if (cat) {
+        metadataMap.set(cat, await fetchTokenMetadata(cat));
+      }
+    }
+
+    for (const rule of nftRules) {
+      const metadata = rule.category ? metadataMap.get(rule.category) : null;
+      const displayName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
+
+      msg += `• **[${rule.id}]** ${rule.label || displayName}\n`;
+      if (rule.start_commitment && rule.end_commitment) {
+        msg += `   Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
+      }
+      // Always show full category ID so it can be copied
+      msg += `   \`${rule.category}\`\n`;
+    }
+    msg += '\n';
+  }
+
+  if (balanceRules.length > 0) {
+    msg += '**Balance** _(at least one required)_\n';
+
+    for (const rule of balanceRules) {
+      if (rule.category?.toUpperCase() === 'BCH') {
+        const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
+        const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
+        msg += `• **[${rule.id}]** ${rule.label || `${bchDisplay} BCH`}\n`;
+      } else {
+        const metadata = rule.category ? await fetchTokenMetadata(rule.category) : null;
+        const displayName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
+        // Use label if set (which now auto-includes symbol), otherwise show amount + token name
+        if (rule.label) {
+          msg += `• **[${rule.id}]** ${rule.label}\n`;
+        } else {
+          msg += `• **[${rule.id}]** ${rule.min_amount} ${displayName}\n`;
+        }
+        // Show full category ID for FT rules
+        msg += `   \`${rule.category}\`\n`;
+      }
+    }
+    msg += '\n';
+  }
+
+  msg += 'Use /remove\\_condition <id> to remove.';
 
   await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+// /remove_condition <id> - Remove an access rule by ID
+adminHandlers.command('remove_condition', requireGroupAdmin, async (ctx: Context) => {
+  const chatId = ctx.chat?.type === 'private' ? null : ctx.chat?.id;
+  const args = (ctx.match as string || '').trim();
+
+  if (!args) {
+    await ctx.reply('Usage: `/remove_condition <id>`\n\nUse `/list_conditions` to see IDs.', { parse_mode: 'Markdown' });
+    return;
+  }
+
+  if (ctx.chat?.type === 'private') {
+    await ctx.reply('This command must be used in a group.');
+    return;
+  }
+
+  const ruleId = parseInt(args, 10);
+  if (isNaN(ruleId)) {
+    await ctx.reply('Invalid ID. Must be a number.');
+    return;
+  }
+
+  // Verify the rule exists and belongs to this group
+  const rule = getAccessRuleById(ruleId);
+  if (!rule) {
+    await ctx.reply('Condition not found.');
+    return;
+  }
+
+  if (rule.group_id !== chatId) {
+    await ctx.reply('This condition does not belong to this group.');
+    return;
+  }
+
+  removeAccessRule(ruleId);
+
+  await ctx.reply(`✅ Condition #${ruleId} removed. Checking affected verifications...`);
+
+  // Check all verifications for this group
+  const result = await checkGroupVerifications(chatId!);
+
+  if (result.checked === 0) {
+    await ctx.reply('No verifications to check.');
+  } else {
+    let msg = `Verification check complete:\n`;
+    msg += `• Checked: ${result.checked}\n`;
+    msg += `• Valid: ${result.valid}\n`;
+    if (result.switched > 0) msg += `• Switched: ${result.switched}\n`;
+    if (result.invalid > 0) msg += `• Restricted (no longer qualify): ${result.invalid}`;
+    await ctx.reply(msg);
+  }
 });
 
 // /status - Show group configuration
@@ -205,7 +406,9 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
     return;
   }
 
-  const categories = getNftCategories(chatId);
+  const rules = getAccessRules(chatId);
+  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  const balanceRules = rules.filter(r => r.rule_type === 'balance');
   const perms = await checkBotPermissions(ctx);
 
   let statusMsg = `📊 **Group Status**\n\n`;
@@ -215,21 +418,20 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
 
   statusMsg += `**Bot Permissions:**\n`;
   statusMsg += `• Can kick: ${perms.canKick ? '✅' : '❌'}\n`;
-  statusMsg += `• Can invite: ${perms.canInvite ? '✅' : '❌'}\n`;
   statusMsg += `• Can restrict: ${perms.canRestrict ? '✅' : '❌'}\n\n`;
 
-  statusMsg += `**NFT Categories:** ${categories.length}\n`;
-  if (categories.length > 0) {
-    // Fetch metadata for all categories
-    const metadataPromises = categories.map(cat => fetchTokenMetadata(cat));
-    const metadataResults = await Promise.all(metadataPromises);
+  statusMsg += `**Access Conditions:** ${rules.length} total\n`;
+  if (nftRules.length > 0) {
+    statusMsg += `• NFT rules: ${nftRules.length}\n`;
+  }
+  if (balanceRules.length > 0) {
+    statusMsg += `• Balance rules: ${balanceRules.length}\n`;
+  }
 
-    categories.forEach((cat, i) => {
-      const displayName = formatTokenName(cat, metadataResults[i]);
-      statusMsg += `${i + 1}. ${displayName}\n`;
-    });
+  if (rules.length === 0) {
+    statusMsg += '_No conditions configured. Use /add\\_condition to add one._';
   } else {
-    statusMsg += '_No categories configured. Use /add\\_category to add one._';
+    statusMsg += '\n_Use /list\\_conditions for details._';
   }
 
   await ctx.reply(statusMsg, { parse_mode: 'Markdown' });
@@ -250,100 +452,46 @@ adminHandlers.command('scan', requireGroupAdmin, async (ctx: Context) => {
     return;
   }
 
-  const categories = getNftCategories(chatId);
-  if (categories.length === 0) {
-    await ctx.reply('No NFT categories configured.');
+  const rules = getAccessRules(chatId);
+  if (rules.length === 0) {
+    await ctx.reply('No access conditions configured. Use /add\\_condition to add one.', { parse_mode: 'Markdown' });
     return;
   }
 
   await ctx.reply('🔍 Scanning verified users...');
 
-  const verifications = getVerificationsForMonitoring().filter(
-    v => v.group_id === chatId
-  );
+  const result = await checkGroupVerifications(chatId);
 
-  if (verifications.length === 0) {
+  if (result.checked === 0) {
     await ctx.reply('No verified users to check.');
-    return;
+  } else {
+    let msg = `✅ Scan complete!\n\n`;
+    msg += `Checked: ${result.checked}\n`;
+    msg += `Valid: ${result.valid}\n`;
+    if (result.switched > 0) msg += `Switched NFT: ${result.switched}\n`;
+    if (result.invalid > 0) msg += `Restricted (no longer qualify): ${result.invalid}`;
+    await ctx.reply(msg);
   }
-
-  let checked = 0;
-  let valid = 0;
-  let invalid = 0;
-  let kicked = 0;
-  let adminSkipped = 0;
-
-  for (const verification of verifications) {
-    checked++;
-
-    try {
-      const ownedNfts = await checkNftOwnership(verification.bch_address, categories);
-
-      if (ownedNfts.length > 0) {
-        valid++;
-        continue;
-      }
-
-      invalid++;
-
-      // Check if user is admin
-      const member = await ctx.api.getChatMember(chatId, verification.telegram_user_id);
-      if (member.status === 'administrator' || member.status === 'creator') {
-        adminSkipped++;
-        deleteVerification(verification.id);
-        continue;
-      }
-
-      // Kick user with short ban (auto-unbans after 35 seconds)
-      try {
-        await ctx.api.banChatMember(chatId, verification.telegram_user_id, {
-          until_date: Math.floor(Date.now() / 1000) + 35,
-        });
-        kicked++;
-
-        // Notify user
-        await ctx.api.sendMessage(
-          verification.telegram_user_id,
-          `You have been removed from "${group.name}" because you no longer hold a qualifying NFT.\n\n` +
-          `If you still own a qualifying NFT, you can rejoin and verify again.`
-        ).catch(() => {}); // Ignore DM errors
-      } catch (kickError) {
-        console.error(`Failed to kick user ${verification.telegram_user_id}:`, kickError);
-      }
-
-      deleteVerification(verification.id);
-
-    } catch (error) {
-      console.error(`Error checking verification ${verification.id}:`, error);
-    }
-  }
-
-  await ctx.reply(
-    `✅ Scan complete!\n\n` +
-    `Checked: ${checked}\n` +
-    `Valid: ${valid}\n` +
-    `Invalid: ${invalid}\n` +
-    `Kicked: ${kicked}\n` +
-    `Admins skipped: ${adminSkipped}`
-  );
 });
 
 // /help - Show admin help
 adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(
     `🔧 **Admin Commands**\n\n` +
+    `**Setup:**\n` +
     `/setup - Initialize bot for this group\n` +
-    `/add\\_category <category> - Add NFT category for access\n` +
-    `/remove\\_category <category> - Remove NFT category\n` +
-    `/list\\_categories - List configured NFT categories\n` +
-    `/status - Show full group configuration\n` +
+    `/status - Show group configuration summary\n\n` +
+    `**Access Conditions:**\n` +
+    `/add\\_condition nft <cat> [label] [start] [end] - NFT with optional commitment range\n` +
+    `/add\\_condition balance <amount> <BCH|cat> - BCH or token balance\n` +
+    `/list\\_conditions - List all access conditions\n` +
+    `/remove\\_condition <id> - Remove a condition by ID\n\n` +
+    `**Management:**\n` +
     `/scan - Re-check all verified users now\n\n` +
-    `**How it works:**\n` +
-    `1. Add bot to group as admin\n` +
-    `2. Run /setup to initialize\n` +
-    `3. Add NFT categories with /add\\_category\n` +
-    `4. Enable "Hidden message history" in group settings\n` +
-    `5. New members will be kicked and asked to verify NFT ownership via DM`,
+    `**Access Logic:**\n` +
+    `• NFT rules: OR - satisfy at least one\n` +
+    `• Balance rules: OR - satisfy at least one\n` +
+    `• Between types: AND - need at least one of each type configured`,
     { parse_mode: 'Markdown' }
   );
 });
