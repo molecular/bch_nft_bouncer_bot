@@ -38,7 +38,6 @@ export function initializeDatabase(): void {
       bch_address TEXT NOT NULL,
       verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       telegram_username TEXT,
-      status TEXT DEFAULT 'active',
       UNIQUE(telegram_user_id, bch_address, group_id)
     );
 
@@ -97,13 +96,13 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_access_rules_group ON group_access_rules(group_id);
   `);
 
-  // Migration: Simplify verifications table - remove nft_category/nft_commitment
+  // Migration: Simplify verifications table - remove nft_category/nft_commitment and status
   // Verifications now just prove address ownership, conditions are checked dynamically
   const columns = db.prepare("PRAGMA table_info(verifications)").all() as { name: string }[];
-  if (columns.some(col => col.name === 'nft_category')) {
-    console.log('Migrating verifications table to remove nft_category/nft_commitment...');
+  if (columns.some(col => col.name === 'nft_category') || columns.some(col => col.name === 'status')) {
+    console.log('Migrating verifications table to simplified schema...');
     db.exec(`
-      -- Create new simplified table
+      -- Create new simplified table (no status - access computed dynamically)
       CREATE TABLE verifications_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_user_id INTEGER NOT NULL,
@@ -111,13 +110,12 @@ export function initializeDatabase(): void {
         bch_address TEXT NOT NULL,
         verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         telegram_username TEXT,
-        status TEXT DEFAULT 'active',
         UNIQUE(telegram_user_id, bch_address, group_id)
       );
 
       -- Copy data (skip duplicate user+address+group combinations)
-      INSERT OR IGNORE INTO verifications_new (telegram_user_id, group_id, bch_address, verified_at, telegram_username, status)
-        SELECT telegram_user_id, group_id, bch_address, verified_at, telegram_username, COALESCE(status, 'active')
+      INSERT OR IGNORE INTO verifications_new (telegram_user_id, group_id, bch_address, verified_at, telegram_username)
+        SELECT telegram_user_id, group_id, bch_address, verified_at, telegram_username
         FROM verifications;
 
       -- Drop old table and rename
@@ -129,7 +127,7 @@ export function initializeDatabase(): void {
       CREATE INDEX idx_verifications_group ON verifications(group_id);
       CREATE INDEX idx_verifications_address ON verifications(bch_address);
     `);
-    console.log('Migrated verifications table - removed nft_category/nft_commitment');
+    console.log('Migrated verifications table to simplified schema');
   }
 
   // Migration: Copy data from group_nft_categories to group_access_rules if needed

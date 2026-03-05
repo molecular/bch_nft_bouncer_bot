@@ -115,22 +115,23 @@ export function addVerification(
   telegramUserId: number,
   telegramUsername: string | null,
   groupId: number,
-  bchAddress: string,
-  status: 'pending' | 'active' = 'active'
+  bchAddress: string
 ): void {
   db.prepare(`
-    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, bch_address, status)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(telegramUserId, telegramUsername, groupId, bchAddress, status);
+    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, bch_address)
+    VALUES (?, ?, ?, ?)
+  `).run(telegramUserId, telegramUsername, groupId, bchAddress);
 }
 
-export function updateVerificationStatus(
-  id: number,
-  status: 'pending' | 'active'
-): void {
-  db.prepare(`
-    UPDATE verifications SET status = ? WHERE id = ?
-  `).run(status, id);
+export function getVerificationByAddress(
+  telegramUserId: number,
+  groupId: number,
+  bchAddress: string
+): Verification | undefined {
+  return db.prepare(`
+    SELECT * FROM verifications
+    WHERE telegram_user_id = ? AND group_id = ? AND bch_address = ?
+  `).get(telegramUserId, groupId, bchAddress) as Verification | undefined;
 }
 
 export function getVerification(
@@ -142,12 +143,12 @@ export function getVerification(
   `).get(telegramUserId, groupId) as Verification | undefined;
 }
 
-export function getActiveVerificationForGroup(
+export function getVerificationForGroup(
   telegramUserId: number,
   groupId: number
 ): Verification | undefined {
   return db.prepare(`
-    SELECT * FROM verifications WHERE telegram_user_id = ? AND group_id = ? AND status = 'active' LIMIT 1
+    SELECT * FROM verifications WHERE telegram_user_id = ? AND group_id = ? LIMIT 1
   `).get(telegramUserId, groupId) as Verification | undefined;
 }
 
@@ -268,31 +269,11 @@ export function getVerificationsForMonitoring(): Array<{
   telegram_user_id: number;
   group_id: number;
   bch_address: string;
-  status: 'pending' | 'active';
-}> {
-  return db.prepare(`
-    SELECT id, telegram_user_id, group_id, bch_address, COALESCE(status, 'active') as status
-    FROM verifications
-  `).all() as Array<{
-    id: number;
-    telegram_user_id: number;
-    group_id: number;
-    bch_address: string;
-    status: 'pending' | 'active';
-  }>;
-}
-
-export function getPendingVerificationsByAddress(bchAddress: string): Array<{
-  id: number;
-  telegram_user_id: number;
-  group_id: number;
-  bch_address: string;
 }> {
   return db.prepare(`
     SELECT id, telegram_user_id, group_id, bch_address
     FROM verifications
-    WHERE bch_address = ? AND status = 'pending'
-  `).all(bchAddress) as Array<{
+  `).all() as Array<{
     id: number;
     telegram_user_id: number;
     group_id: number;

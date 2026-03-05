@@ -1,6 +1,6 @@
 import { getProvider } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
-import { getVerificationsForMonitoring, deleteVerification, updateVerificationStatus, getNftCategories, getGroup, getAllVerifiedAddresses, getPendingVerificationsByAddress, deletePendingKick, getAccessRules } from '../storage/queries.js';
+import { getVerificationsForMonitoring, deleteVerification, getNftCategories, getGroup, getAllVerifiedAddresses, deletePendingKick, getAccessRules, getPendingKick, addPendingKick } from '../storage/queries.js';
 import { unrestrictUser } from '../bot/utils/permissions.js';
 import { escapeMarkdown } from '../bot/utils/format.js';
 import { formatRequirementsMessage } from '../bot/handlers/verify.js';
@@ -144,7 +144,16 @@ async function checkAddressVerifications(address: string): Promise<void> {
 
   console.log(`[subscription] Checking ${verifications.length} verifications for ${address.slice(0, 25)}...`);
 
-  for (const verification of verifications) {
+  // Group by user+group to avoid duplicate checks
+  const userGroupMap = new Map<string, typeof verifications[0]>();
+  for (const v of verifications) {
+    const key = `${v.telegram_user_id}:${v.group_id}`;
+    if (!userGroupMap.has(key)) {
+      userGroupMap.set(key, v);
+    }
+  }
+
+  for (const [key, verification] of userGroupMap) {
     try {
       const rules = getAccessRules(verification.group_id);
 
@@ -154,7 +163,7 @@ async function checkAddressVerifications(address: string): Promise<void> {
         continue;
       }
 
-      // Get all addresses for this user in this group (for multi-address verification)
+      // Get all addresses for this user in this group
       const userVerifications = getVerificationsForMonitoring().filter(
         v => v.telegram_user_id === verification.telegram_user_id && v.group_id === verification.group_id
       );
@@ -163,34 +172,32 @@ async function checkAddressVerifications(address: string): Promise<void> {
       // Check access rules against all user's addresses
       const result = await checkAccessRulesMultiAddress(userAddresses, rules);
 
-      console.log(`[subscription] User ${verification.telegram_user_id} group ${verification.group_id}: status=${verification.status}, satisfied=${result.satisfied}, nft=${result.nftSatisfied}, balance=${result.balanceSatisfied}`);
+      // Check if user is currently restricted (has pending_kick)
+      const isRestricted = !!getPendingKick(verification.telegram_user_id, verification.group_id);
+
+      console.log(`[subscription] User ${verification.telegram_user_id} group ${verification.group_id}: restricted=${isRestricted}, satisfied=${result.satisfied}, nft=${result.nftSatisfied}, balance=${result.balanceSatisfied}`);
 
       // Check if condition state changed
-      const cacheKey = `${verification.telegram_user_id}:${verification.group_id}`;
+      const cacheKey = key;
       const newStateKey = getConditionStateKey(result);
       const oldStateKey = conditionStateCache.get(cacheKey);
 
-      if (verification.status === 'pending') {
-        // Pending verification - check if now qualifies
-        if (result.satisfied) {
-          console.log(`[subscription] Pending user ${verification.telegram_user_id} now qualifies - activating!`);
-          conditionStateCache.set(cacheKey, newStateKey);
-          // Update status message one last time with all green checkmarks
-          await notifyConditionProgress(verification, rules, result);
-          await activatePendingVerification(verification);
-        } else if (oldStateKey !== newStateKey) {
-          // State changed but not fully satisfied - notify user of progress
-          console.log(`[subscription] Condition state changed for pending user ${verification.telegram_user_id}`);
-          conditionStateCache.set(cacheKey, newStateKey);
-          await notifyConditionProgress(verification, rules, result);
-        }
-      } else {
-        // Active verification - check if still qualifies
-        if (!result.satisfied) {
-          console.log(`[subscription] User ${verification.telegram_user_id} no longer qualifies - will restrict`);
-          conditionStateCache.set(cacheKey, newStateKey);
-          await handleNoLongerQualifies(verification);
-        }
+      if (result.satisfied && isRestricted) {
+        // Now qualifies - unrestrict
+        console.log(`[subscription] User ${verification.telegram_user_id} now qualifies - granting access!`);
+        conditionStateCache.set(cacheKey, newStateKey);
+        await notifyConditionProgress(verification, rules, result);
+        await grantAccess(verification);
+      } else if (!result.satisfied && !isRestricted) {
+        // No longer qualifies - restrict
+        console.log(`[subscription] User ${verification.telegram_user_id} no longer qualifies - restricting`);
+        conditionStateCache.set(cacheKey, newStateKey);
+        await revokeAccess(verification);
+      } else if (isRestricted && oldStateKey !== newStateKey) {
+        // Still restricted but state changed - notify progress
+        console.log(`[subscription] Condition state changed for user ${verification.telegram_user_id}`);
+        conditionStateCache.set(cacheKey, newStateKey);
+        await notifyConditionProgress(verification, rules, result);
       }
     } catch (error) {
       console.error(`[subscription] Error checking verification ${verification.id}:`, error);
@@ -199,21 +206,18 @@ async function checkAddressVerifications(address: string): Promise<void> {
 }
 
 /**
- * Activate a pending verification when user meets access conditions
+ * Grant access to user when they meet conditions
  */
-async function activatePendingVerification(
+async function grantAccess(
   verification: { id: number; telegram_user_id: number; group_id: number; bch_address: string }
 ): Promise<void> {
   if (!botInstance) {
-    console.error('Bot instance not available for activating pending verification');
+    console.error('Bot instance not available for granting access');
     return;
   }
 
   try {
-    // Update verification to active
-    updateVerificationStatus(verification.id, 'active');
-
-    // Remove from pending kicks
+    // Remove from pending kicks (marks them as having access)
     deletePendingKick(verification.telegram_user_id, verification.group_id);
 
     // Clear cached status message
@@ -233,7 +237,7 @@ async function activatePendingVerification(
       await unrestrictUser(botInstance.api, verification.group_id, verification.telegram_user_id);
     }
 
-    console.log(`[monitor] Activated pending verification for user ${verification.telegram_user_id} in group ${verification.group_id}`);
+    console.log(`[monitor] Granted access to user ${verification.telegram_user_id} in group ${verification.group_id}`);
 
     // Notify user via DM
     try {
@@ -374,13 +378,19 @@ async function checkAllVerifications(): Promise<void> {
       // Check access rules against all user's addresses
       const result = await checkAccessRulesMultiAddress(userAddresses, rules);
 
-      if (verification.status === 'pending') {
-        // Pending verification
-        if (result.satisfied) {
-          // Now qualifies - activate!
-          await activatePendingVerification(verification);
+      // Check if user is currently restricted
+      const isRestricted = !!getPendingKick(verification.telegram_user_id, verification.group_id);
+
+      if (result.satisfied) {
+        if (isRestricted) {
+          // Now qualifies - grant access
+          await grantAccess(verification);
           activated++;
         } else {
+          valid++;
+        }
+      } else {
+        if (isRestricted) {
           // Still doesn't qualify - ensure user is restricted
           pending++;
           if (botInstance) {
@@ -395,23 +405,17 @@ async function checkAllVerifications(): Promise<void> {
                   verification.telegram_user_id,
                   { permissions: { can_send_messages: false } }
                 );
-                console.log(`[monitor] Restricted pending user ${verification.telegram_user_id} in group ${verification.group_id}`);
+                console.log(`[monitor] Restricted user ${verification.telegram_user_id} in group ${verification.group_id}`);
               }
             } catch (e) {
               // Ignore errors (user may have left, bot may not have permission)
             }
           }
-        }
-      } else {
-        // Active verification
-        if (!result.satisfied) {
-          invalid++;
-          console.log(
-            `[monitor] User ${verification.telegram_user_id} no longer qualifies - will restrict`
-          );
-          await handleNoLongerQualifies(verification);
         } else {
-          valid++;
+          // No longer qualifies - revoke access
+          invalid++;
+          console.log(`[monitor] User ${verification.telegram_user_id} no longer qualifies - will restrict`);
+          await revokeAccess(verification);
         }
       }
     } catch (error) {
@@ -439,48 +443,42 @@ async function checkAllVerifications(): Promise<void> {
 }
 
 /**
- * Handle when a user no longer qualifies (conditions not met)
+ * Revoke access when user no longer meets conditions
  */
-async function handleNoLongerQualifies(verification: {
+async function revokeAccess(verification: {
   id: number;
   telegram_user_id: number;
   group_id: number;
   bch_address: string;
 }): Promise<void> {
   if (!botInstance) {
-    console.error('Bot instance not available for kicking user');
+    console.error('Bot instance not available for revoking access');
     return;
   }
 
   try {
-    // Check if user is admin/creator - don't kick them
+    // Check if user is admin/creator - don't restrict them
     const member = await botInstance.api.getChatMember(
       verification.group_id,
       verification.telegram_user_id
     );
 
     if (member.status === 'administrator' || member.status === 'creator') {
-      console.log(
-        `User ${verification.telegram_user_id} is admin/creator - setting to pending, not kicking`
-      );
-      // Set back to pending - they can receive another NFT
-      updateVerificationStatus(verification.id, 'pending');
+      console.log(`User ${verification.telegram_user_id} is admin/creator - not restricting`);
       return;
     }
 
-    // Set verification back to pending (keeps monitoring the address)
-    updateVerificationStatus(verification.id, 'pending');
+    // Add to pending kicks (marks them as restricted)
+    addPendingKick(verification.telegram_user_id, verification.group_id);
 
-    // Restrict the user (but don't kick - they can still receive NFT and get re-activated)
+    // Restrict the user
     try {
       await botInstance.api.restrictChatMember(
         verification.group_id,
         verification.telegram_user_id,
         { permissions: { can_send_messages: false } }
       );
-      console.log(
-        `Restricted user ${verification.telegram_user_id} in group ${verification.group_id} - NFT transferred, now pending`
-      );
+      console.log(`[monitor] Revoked access for user ${verification.telegram_user_id} in group ${verification.group_id}`);
     } catch (restrictError) {
       console.error('Could not restrict user:', restrictError);
     }
@@ -501,10 +499,7 @@ async function handleNoLongerQualifies(verification: {
     }
 
   } catch (error) {
-    console.error(
-      `Error handling NFT transfer for user ${verification.telegram_user_id}:`,
-      error
-    );
+    console.error(`Error revoking access for user ${verification.telegram_user_id}:`, error);
   }
 }
 
@@ -564,10 +559,13 @@ export async function checkGroupVerifications(groupId: number): Promise<{
     const verification = userVerifications[0];
 
     try {
-      // If no rules left, all verifications are invalid
+      // If no rules left, all users with verifications should be restricted
       if (rules.length === 0) {
-        invalid++;
-        await handleNoLongerQualifies(verification);
+        const isRestricted = !!getPendingKick(userId, groupId);
+        if (!isRestricted) {
+          invalid++;
+          await revokeAccess(verification);
+        }
         continue;
       }
 
@@ -576,11 +574,15 @@ export async function checkGroupVerifications(groupId: number): Promise<{
 
       // Check access rules
       const result = await checkAccessRulesMultiAddress(userAddresses, rules);
+      const isRestricted = !!getPendingKick(userId, groupId);
 
-      if (!result.satisfied) {
+      if (!result.satisfied && !isRestricted) {
         invalid++;
         console.log(`[monitor] Group check: user ${userId} no longer qualifies - will restrict`);
-        await handleNoLongerQualifies(verification);
+        await revokeAccess(verification);
+      } else if (result.satisfied && isRestricted) {
+        valid++;
+        await grantAccess(verification);
       } else {
         valid++;
       }

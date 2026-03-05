@@ -3,7 +3,7 @@ import {
   getGroup,
   isGroupConfigured,
   getVerification,
-  getActiveVerificationForGroup,
+  getVerificationForGroup,
   addPendingKick,
   getPendingKick,
   getNftCategories,
@@ -56,10 +56,13 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return; // Not a gated group
   }
 
-  // Check if user is already verified (active, not pending)
-  const verification = getVerification(userId, chatId);
-  if (verification && verification.status === 'active') {
-    console.log(`User ${userId} already verified (active) for group ${chatId}, ensuring unrestricted`);
+  // Check if user has a verification for this group
+  const verification = getVerificationForGroup(userId, chatId);
+  const pendingKick = getPendingKick(userId, chatId);
+
+  if (verification && !pendingKick) {
+    // User is verified AND not in pending_kicks = they qualify
+    console.log(`User ${userId} verified and qualifies for group ${chatId}, ensuring unrestricted`);
     try {
       await unrestrictUser(ctx.api, chatId, userId);
       console.log(`User ${userId} unrestricted on rejoin`);
@@ -69,15 +72,14 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return;
   }
 
-  // If user has a pending verification, keep them restricted
-  if (verification && verification.status === 'pending') {
-    console.log(`User ${userId} has pending verification for group ${chatId}, staying restricted`);
+  if (verification && pendingKick) {
+    // User has verified address but doesn't qualify yet - stay restricted
+    console.log(`User ${userId} has verification but doesn't qualify for group ${chatId}, staying restricted`);
     return;
   }
 
   // Check if we've already prompted this user (avoid duplicate prompts when restriction triggers chat_member event)
-  const pending = getPendingKick(userId, chatId);
-  if (pending) {
+  if (pendingKick) {
     console.log(`User ${userId} already in pending_kicks, skipping prompt`);
     return;
   }
@@ -172,10 +174,12 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     // If we can't check membership, continue with verification check
   }
 
-  // Check if user has any active verification (may have multiple addresses)
-  const activeVerification = getActiveVerificationForGroup(userId, chatId);
-  if (activeVerification) {
-    // User has an active verification - ensure unrestricted
+  // Check if user qualifies (has verification AND not in pending_kicks)
+  const verification = getVerificationForGroup(userId, chatId);
+  const pendingKick = getPendingKick(userId, chatId);
+
+  if (verification && !pendingKick) {
+    // User is verified and qualifies - ensure unrestricted
     try {
       const wasRestricted = await unrestrictIfNeeded(ctx.api, chatId, userId);
       if (wasRestricted) {
@@ -184,19 +188,18 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     } catch (error: any) {
       console.error(`[join] Error unrestricting verified user ${userId}:`, error.message);
     }
-    return next(); // User is verified, allow message
+    return next(); // User qualifies, allow message
   }
 
-  // Check if user has a pending verification - they're waiting for NFT
-  const pendingVerification = getVerification(userId, chatId);
-  if (pendingVerification && pendingVerification.status === 'pending') {
-    // User has pending verification - don't spam them, just delete message
+  // Check if user has verification but doesn't qualify (in pending_kicks)
+  if (verification && pendingKick) {
+    // User has verified address but doesn't meet conditions - just delete message quietly
     try {
       await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
     } catch {
       // Ignore delete errors
     }
-    return; // Don't continue with "verify" prompt - they already know
+    return; // Don't spam them - they already know
   }
 
   // Unverified user posted - delete message and remind them

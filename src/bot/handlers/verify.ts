@@ -11,6 +11,7 @@ import {
   deletePendingKick,
   addVerification,
   getVerification,
+  getVerificationByAddress,
   getVerificationsForUser,
   getVerificationById,
   deleteVerification,
@@ -20,7 +21,6 @@ import {
   getAccessRules,
   getVerificationsByAddress,
   getVerificationsForMonitoring,
-  updateVerificationStatus,
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
@@ -173,9 +173,8 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
   if (existingVerifications.length > 0) {
     msg += `📋 **Your verified addresses:**\n`;
     for (const v of existingVerifications) {
-      const statusIcon = v.status === 'active' ? '✅' : '⏳';
       const addressShort = v.bch_address.slice(12, 22) + '...';
-      msg += `${statusIcon} ${addressShort}\n`;
+      msg += `• ${addressShort}\n`;
     }
     msg += `\n`;
   }
@@ -428,7 +427,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
 
     // Store verification
     const username = ctx.from?.username || null;
-    addVerification(userId, username, state.groupId, state.address, result.satisfied ? 'active' : 'pending');
+    addVerification(userId, username, state.groupId, state.address);
     await addAddressToMonitor(state.address);
     if (state.challenge) {
       deleteChallenge(state.challenge.id);
@@ -533,6 +532,44 @@ async function handleWcVerification(
 
         const address = addressInfos[0].address;
 
+        // Check if this address is already verified for this group
+        const existingForAddress = getVerificationByAddress(userId, state.groupId, address);
+        if (existingForAddress) {
+          // Already proved ownership of this address - just re-check conditions
+          await ctx.reply('🔍 Re-checking conditions for your verified address...');
+          await disconnectSession(userId);
+
+          const rules = getAccessRules(state.groupId);
+          const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+          const allAddresses = [...new Set(existingVerifications.map(v => v.bch_address))];
+          const result = await checkAccessRulesMultiAddress(allAddresses, rules);
+
+          if (result.satisfied) {
+            deletePendingKick(userId, state.groupId);
+
+            await ctx.reply(
+              '✅ **All requirements now satisfied!**\n\n' +
+              await formatRequirementsMessage(rules, result),
+              { parse_mode: 'Markdown' }
+            );
+            await addUserToGroup(ctx, userId, state.groupId);
+            verificationState.delete(userId);
+          } else {
+            // Still pending - show progress
+            let msg = '📊 **Current Status:**\n\n';
+            msg += await formatRequirementsMessage(rules, result);
+            if (result.nftSatisfied && !result.balanceSatisfied) {
+              msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
+            } else if (!result.nftSatisfied && result.balanceSatisfied) {
+              msg += `_Balance requirement satisfied! Still need an NFT condition._\n\n`;
+            }
+            msg += `Verify another address via /wc or paste address.`;
+            await ctx.reply(msg, { parse_mode: 'Markdown' });
+            state.step = 'address';
+          }
+          return;
+        }
+
         // Get access rules and check this address + existing verifications
         const rules = getAccessRules(state.groupId);
         const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
@@ -569,13 +606,7 @@ async function handleWcVerification(
 
           // Store verification
           const username = ctx.from?.username || null;
-          addVerification(
-            userId,
-            username,
-            state.groupId,
-            address,
-            result.satisfied ? 'active' : 'pending'
-          );
+          addVerification(userId, username, state.groupId, address);
           await addAddressToMonitor(address);
           deleteChallenge(challenge.id);
           await disconnectSession(userId);
@@ -732,6 +763,42 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
     const address = text.startsWith('bitcoincash:') ? text : `bitcoincash:${text}`;
 
+    // Check if this address is already verified for this group
+    const existingForAddress = getVerificationByAddress(userId, state.groupId, address);
+    if (existingForAddress) {
+      // Already proved ownership of this address - just re-check conditions
+      await ctx.reply('🔍 Re-checking conditions for your verified address...');
+
+      const rules = getAccessRules(state.groupId);
+      const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+      const allAddresses = [...new Set(existingVerifications.map(v => v.bch_address))];
+      const result = await checkAccessRulesMultiAddress(allAddresses, rules);
+
+      if (result.satisfied) {
+        deletePendingKick(userId, state.groupId);
+
+        await ctx.reply(
+          '✅ **All requirements now satisfied!**\n\n' +
+          await formatRequirementsMessage(rules, result),
+          { parse_mode: 'Markdown' }
+        );
+        await addUserToGroup(ctx, userId, state.groupId);
+        verificationState.delete(userId);
+      } else {
+        // Still pending - show progress
+        let msg = '📊 **Current Status:**\n\n';
+        msg += await formatRequirementsMessage(rules, result);
+        if (result.nftSatisfied && !result.balanceSatisfied) {
+          msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
+        } else if (!result.nftSatisfied && result.balanceSatisfied) {
+          msg += `_Balance requirement satisfied! Still need an NFT condition._\n\n`;
+        }
+        msg += `Verify another address via /wc or paste address.`;
+        await ctx.reply(msg, { parse_mode: 'Markdown' });
+      }
+      return;
+    }
+
     // Check access rules
     await ctx.reply('🔍 Checking wallet...');
 
@@ -816,13 +883,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
     // Store verification
     const username = ctx.from?.username || null;
-    addVerification(
-      userId,
-      username,
-      state.groupId,
-      state.address,
-      result.satisfied ? 'active' : 'pending'
-    );
+    addVerification(userId, username, state.groupId, state.address);
     await addAddressToMonitor(state.address);
     deleteChallenge(state.challenge.id);
 
@@ -883,11 +944,8 @@ verifyHandlers.command('list_verifications', async (ctx: Context) => {
     const group = getGroup(v.group_id);
     const groupName = group?.name || `Group ${v.group_id}`;
     const addressShort = v.bch_address.slice(0, 25) + '...';
-    const statusIcon = v.status === 'active' ? '✅' : '⏳';
-    const statusText = v.status === 'active' ? 'active' : 'pending';
 
     msg += `**[${v.id}]**: ${groupName}\n`;
-    msg += `    ${statusIcon} ${statusText}\n`;
     msg += `    📍 ${addressShort}\n\n`;
   }
 
@@ -962,16 +1020,12 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
       const result = await checkAccessRulesMultiAddress(addresses, rules);
 
       if (!result.satisfied) {
-        // User no longer qualifies - restrict them and set remaining to pending
+        // User no longer qualifies - restrict them
         try {
           await ctx.api.restrictChatMember(groupId, userId, {
             permissions: { can_send_messages: false }
           });
-          // Set remaining verifications to pending
-          for (const v of remainingVerifications) {
-            updateVerificationStatus(v.id, 'pending');
-          }
-          // Add pending kick to prevent group message spam
+          // Add pending kick to track restricted status
           addPendingKick(userId, groupId);
           restrictedMsg = `\n\n⚠️ You no longer meet the access conditions for this group and have been restricted.`;
         } catch (e) {

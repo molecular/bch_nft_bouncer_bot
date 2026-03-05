@@ -16,7 +16,6 @@ export interface Verification {
   group_id: number;
   bch_address: string;
   verified_at: string;
-  status: 'pending' | 'active';  // pending = conditions not met, active = conditions met
 }
 
 export interface Challenge {
