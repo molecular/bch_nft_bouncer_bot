@@ -11,7 +11,6 @@ import {
   deletePendingKick,
   addVerification,
   getVerification,
-  getVerificationByNft,
   getVerificationsForUser,
   getVerificationById,
   deleteVerification,
@@ -45,8 +44,6 @@ const verificationState: Map<number, {
   challengeMessage?: string;
   address?: string;
   wcPairingTopic?: string;
-  wcNft?: { category: string; commitment: string | null } | null;
-  pendingMode?: boolean; // true if verifying address without NFT yet
 }> = new Map();
 
 // /start - Handle start with or without deep link
@@ -226,8 +223,8 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
   await ctx.reply(msg, { parse_mode: 'Markdown' });
 }
 
-// Helper to format requirements with status
-async function formatRequirementsMessage(
+// Helper to format requirements with status (exported for use in monitor)
+export async function formatRequirementsMessage(
   rules: AccessRule[],
   checkResult: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>> | null
 ): Promise<string> {
@@ -251,13 +248,13 @@ async function formatRequirementsMessage(
     for (const rule of nftRules) {
       const ruleResult = checkResult?.nftResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
-      const icon = satisfied ? '✅' : '⬜';
+      const icon = satisfied ? '✅' : '▫️';
       const metadata = rule.category ? metadataMap.get(rule.category) : null;
       const displayName = rule.label || (rule.category ? formatTokenName(rule.category, metadata) : 'Unknown');
 
       msg += `${icon} ${displayName}`;
       if (rule.start_commitment && rule.end_commitment) {
-        msg += ` (\`${rule.start_commitment}\`-\`${rule.end_commitment}\`)`;
+        msg += ` (${rule.start_commitment}-${rule.end_commitment})`;
       }
       msg += `\n`;
     }
@@ -270,22 +267,55 @@ async function formatRequirementsMessage(
     for (const rule of balanceRules) {
       const ruleResult = checkResult?.balanceResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
-      const icon = satisfied ? '✅' : '⬜';
+      const icon = satisfied ? '✅' : '▫️';
 
       let displayName: string;
-      if (rule.category?.toUpperCase() === 'BCH') {
+      if (rule.label) {
+        // Label already includes amount info
+        displayName = rule.label;
+      } else if (rule.category?.toUpperCase() === 'BCH') {
         const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
         const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
-        displayName = rule.label || `${bchDisplay} BCH`;
+        displayName = `${bchDisplay} BCH`;
       } else {
         const metadata = rule.category ? await fetchTokenMetadata(rule.category) : null;
         const tokenName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
-        displayName = `${rule.min_amount} ${rule.label || tokenName}`;
+        displayName = `${rule.min_amount} ${tokenName}`;
       }
 
       msg += `${icon} ${displayName}\n`;
     }
     msg += '\n';
+  }
+
+  return msg;
+}
+
+// Helper to format which conditions were satisfied (for success messages)
+function formatSatisfiedConditions(
+  result: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
+): string {
+  const satisfiedNfts = result.nftResults.filter(r => r.satisfied);
+  const satisfiedBalances = result.balanceResults.filter(r => r.satisfied);
+
+  let msg = '';
+
+  if (satisfiedNfts.length > 0) {
+    for (const r of satisfiedNfts) {
+      if (r.matchingNft) {
+        msg += `NFT: ${r.rule.label || r.matchingNft.category.slice(0, 8)}`;
+        if (r.matchingNft.commitment) {
+          msg += ` (${r.matchingNft.commitment})`;
+        }
+        msg += '\n';
+      }
+    }
+  }
+
+  if (satisfiedBalances.length > 0) {
+    for (const r of satisfiedBalances) {
+      msg += `Balance: ${r.rule.label || r.rule.category}\n`;
+    }
   }
 
   return msg;
@@ -364,7 +394,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
     return;
   }
 
-  if (!state.address || !state.wcNft || !state.challengeMessage) {
+  if (!state.address || !state.challengeMessage) {
     await ctx.reply('Session expired. Please use /wc to reconnect.');
     state.step = 'address';
     return;
@@ -390,37 +420,41 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       return;
     }
 
-    // Re-check if NFT is still available (another user could have claimed it)
-    const existingBinding = getVerificationByNft(state.wcNft.category, state.wcNft.commitment, state.groupId);
-    if (existingBinding && existingBinding.telegram_user_id !== userId) {
-      await ctx.reply(
-        '❌ This NFT was claimed by another user while you were signing.\n\n' +
-        'Each NFT can only verify one Telegram account.'
-      );
-      await disconnectSession(userId);
-      verificationState.delete(userId);
-      return;
-    }
+    // Check access rules
+    const rules = getAccessRules(state.groupId);
+    const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+    const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), state.address])];
+    const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-    // Success! Store verification
+    // Store verification
     const username = ctx.from?.username || null;
-    addVerification(userId, username, state.groupId, state.wcNft.category, state.wcNft.commitment, state.address);
-    await addAddressToMonitor(state.address); // Start monitoring this address
+    addVerification(userId, username, state.groupId, state.address, result.satisfied ? 'active' : 'pending');
+    await addAddressToMonitor(state.address);
     if (state.challenge) {
       deleteChallenge(state.challenge.id);
     }
-    deletePendingKick(userId, state.groupId);
 
-    // Fetch metadata for nice display
-    const metadata = await fetchTokenMetadata(state.wcNft.category);
-    const nftDisplay = formatNftDisplay(state.wcNft.category, state.wcNft.commitment, metadata);
+    if (result.satisfied) {
+      deletePendingKick(userId, state.groupId);
 
-    await ctx.reply(
-      '✅ **Verification successful!**\n\n' +
-      `NFT: ${nftDisplay}\n\n` +
-      'You now have full access to the group!',
-      { parse_mode: 'Markdown' }
-    );
+      // Build success message showing what was satisfied
+      let msg = '✅ **Verification successful!**\n\n';
+      msg += formatSatisfiedConditions(result);
+      msg += '\nYou now have full access to the group!';
+
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+    } else {
+      // Show progress
+      let msg = '✅ **Address verified!**\n\n';
+      msg += `Address: \`${state.address.slice(0, 20)}...\`\n\n`;
+      msg += '**Condition Progress:**\n\n';
+      msg += await formatRequirementsMessage(rules, result);
+      msg += `\nProve another address via /wc or paste address, or /cancel.`;
+
+      await ctx.reply(msg, { parse_mode: 'Markdown' });
+      state.step = 'address';
+      return; // Don't add to group yet
+    }
 
     // Try to add user back to group
     await addUserToGroup(ctx, userId, state.groupId);
@@ -505,12 +539,8 @@ async function handleWcVerification(
         const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), address])];
         const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-        // Store address and any matching NFT for potential retry
+        // Store address for signature verification
         state.address = address;
-        const nftMatch = result.nftResults.find(r => r.satisfied && r.matchingNft);
-        state.wcNft = nftMatch?.matchingNft
-          ? { category: nftMatch.matchingNft.category, commitment: nftMatch.matchingNft.commitment }
-          : null;
 
         // Request signature to prove address ownership
         const challenge = createChallenge(userId, state.groupId, address);
@@ -539,13 +569,10 @@ async function handleWcVerification(
 
           // Store verification
           const username = ctx.from?.username || null;
-          const nft = state.wcNft;
           addVerification(
             userId,
             username,
             state.groupId,
-            nft?.category || '',
-            nft?.commitment ?? null,
             address,
             result.satisfied ? 'active' : 'pending'
           );
@@ -730,8 +757,6 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
       state.challenge = challenge;
       state.challengeMessage = challengeMessage;
       state.address = address;
-      state.pendingMode = !result.satisfied; // Pending if not all requirements met
-      state.wcNft = nft ? { category: nft.category, commitment: nft.commitment } : null;
 
       let msg = '';
       if (result.satisfied) {
@@ -789,18 +814,12 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
     const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), state.address])];
     const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-    // Get NFT for this address if any
-    const nftMatch = result.nftResults.find(r => r.satisfied && r.matchingNft);
-    const nft = nftMatch?.matchingNft || state.wcNft;
-
     // Store verification
     const username = ctx.from?.username || null;
     addVerification(
       userId,
       username,
       state.groupId,
-      nft?.category || '',
-      nft?.commitment ?? null,
       state.address,
       result.satisfied ? 'active' : 'pending'
     );
@@ -865,16 +884,10 @@ verifyHandlers.command('list_verifications', async (ctx: Context) => {
     const groupName = group?.name || `Group ${v.group_id}`;
     const addressShort = v.bch_address.slice(0, 25) + '...';
     const statusIcon = v.status === 'active' ? '✅' : '⏳';
-
-    // Get category display name
-    let categoryDisplay = 'waiting for NFT';
-    if (v.nft_category && v.nft_category !== '') {
-      const metadata = await fetchTokenMetadata(v.nft_category);
-      categoryDisplay = formatTokenName(v.nft_category, metadata);
-    }
+    const statusText = v.status === 'active' ? 'active' : 'pending';
 
     msg += `**[${v.id}]**: ${groupName}\n`;
-    msg += `    ${statusIcon} ${v.status} | ${categoryDisplay}\n`;
+    msg += `    ${statusIcon} ${statusText}\n`;
     msg += `    📍 ${addressShort}\n\n`;
   }
 

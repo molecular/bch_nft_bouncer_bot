@@ -30,17 +30,16 @@ export function initializeDatabase(): void {
       PRIMARY KEY (group_id, category)
     );
 
-    -- Verified users and their NFT bindings
+    -- Verified addresses: proves user owns address for a group
     CREATE TABLE IF NOT EXISTS verifications (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       telegram_user_id INTEGER NOT NULL,
       group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
-      nft_category TEXT NOT NULL,
-      nft_commitment TEXT,              -- NFT commitment (for uniqueness)
-      bch_address TEXT NOT NULL,        -- Address holding the NFT
+      bch_address TEXT NOT NULL,
       verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       telegram_username TEXT,
-      UNIQUE(nft_category, nft_commitment, group_id)  -- Same NFT can verify same user in multiple groups
+      status TEXT DEFAULT 'active',
+      UNIQUE(telegram_user_id, bch_address, group_id)
     );
 
     -- Pending verification challenges
@@ -98,17 +97,39 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_access_rules_group ON group_access_rules(group_id);
   `);
 
-  // Migration: Add telegram_username column if it doesn't exist
+  // Migration: Simplify verifications table - remove nft_category/nft_commitment
+  // Verifications now just prove address ownership, conditions are checked dynamically
   const columns = db.prepare("PRAGMA table_info(verifications)").all() as { name: string }[];
-  if (!columns.some(col => col.name === 'telegram_username')) {
-    db.exec("ALTER TABLE verifications ADD COLUMN telegram_username TEXT");
-    console.log('Added telegram_username column to verifications table');
-  }
+  if (columns.some(col => col.name === 'nft_category')) {
+    console.log('Migrating verifications table to remove nft_category/nft_commitment...');
+    db.exec(`
+      -- Create new simplified table
+      CREATE TABLE verifications_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_user_id INTEGER NOT NULL,
+        group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
+        bch_address TEXT NOT NULL,
+        verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        telegram_username TEXT,
+        status TEXT DEFAULT 'active',
+        UNIQUE(telegram_user_id, bch_address, group_id)
+      );
 
-  // Migration: Add status column if it doesn't exist (for pending verifications)
-  if (!columns.some(col => col.name === 'status')) {
-    db.exec("ALTER TABLE verifications ADD COLUMN status TEXT DEFAULT 'active'");
-    console.log('Added status column to verifications table');
+      -- Copy data (skip duplicate user+address+group combinations)
+      INSERT OR IGNORE INTO verifications_new (telegram_user_id, group_id, bch_address, verified_at, telegram_username, status)
+        SELECT telegram_user_id, group_id, bch_address, verified_at, telegram_username, COALESCE(status, 'active')
+        FROM verifications;
+
+      -- Drop old table and rename
+      DROP TABLE verifications;
+      ALTER TABLE verifications_new RENAME TO verifications;
+
+      -- Recreate indexes
+      CREATE INDEX idx_verifications_user ON verifications(telegram_user_id);
+      CREATE INDEX idx_verifications_group ON verifications(group_id);
+      CREATE INDEX idx_verifications_address ON verifications(bch_address);
+    `);
+    console.log('Migrated verifications table - removed nft_category/nft_commitment');
   }
 
   // Migration: Copy data from group_nft_categories to group_access_rules if needed

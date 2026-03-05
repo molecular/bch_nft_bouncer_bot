@@ -386,7 +386,6 @@ adminHandlers.command('remove_condition', requireGroupAdmin, async (ctx: Context
     let msg = `Verification check complete:\n`;
     msg += `• Checked: ${result.checked}\n`;
     msg += `• Valid: ${result.valid}\n`;
-    if (result.switched > 0) msg += `• Switched: ${result.switched}\n`;
     if (result.invalid > 0) msg += `• Restricted (no longer qualify): ${result.invalid}`;
     await ctx.reply(msg);
   }
@@ -472,7 +471,6 @@ adminHandlers.command('scan', requireGroupAdmin, async (ctx: Context) => {
     let msg = `✅ Scan complete!\n\n`;
     msg += `Checked: ${result.checked}\n`;
     msg += `Valid: ${result.valid}\n`;
-    if (result.switched > 0) msg += `Switched NFT: ${result.switched}\n`;
     if (result.invalid > 0) msg += `Restricted (no longer qualify): ${result.invalid}`;
     await ctx.reply(msg);
   }

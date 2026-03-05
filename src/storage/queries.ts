@@ -115,32 +115,22 @@ export function addVerification(
   telegramUserId: number,
   telegramUsername: string | null,
   groupId: number,
-  nftCategory: string | null,
-  nftCommitment: string | null,
   bchAddress: string,
   status: 'pending' | 'active' = 'active'
 ): void {
   db.prepare(`
-    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, nft_category, nft_commitment, bch_address, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(telegramUserId, telegramUsername, groupId, nftCategory, nftCommitment, bchAddress, status);
+    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, bch_address, status)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(telegramUserId, telegramUsername, groupId, bchAddress, status);
 }
 
 export function updateVerificationStatus(
   id: number,
-  status: 'pending' | 'active',
-  nftCategory?: string,
-  nftCommitment?: string | null
+  status: 'pending' | 'active'
 ): void {
-  if (nftCategory !== undefined) {
-    db.prepare(`
-      UPDATE verifications SET status = ?, nft_category = ?, nft_commitment = ? WHERE id = ?
-    `).run(status, nftCategory, nftCommitment ?? null, id);
-  } else {
-    db.prepare(`
-      UPDATE verifications SET status = ? WHERE id = ?
-    `).run(status, id);
-  }
+  db.prepare(`
+    UPDATE verifications SET status = ? WHERE id = ?
+  `).run(status, id);
 }
 
 export function getVerification(
@@ -171,21 +161,6 @@ export function getVerificationById(id: number): Verification | undefined {
   return db.prepare('SELECT * FROM verifications WHERE id = ?').get(id) as Verification | undefined;
 }
 
-export function getVerificationByNft(
-  nftCategory: string,
-  nftCommitment: string | null,
-  groupId: number
-): Verification | undefined {
-  if (nftCommitment === null) {
-    return db.prepare(`
-      SELECT * FROM verifications WHERE nft_category = ? AND nft_commitment IS NULL AND group_id = ?
-    `).get(nftCategory, groupId) as Verification | undefined;
-  }
-  return db.prepare(`
-    SELECT * FROM verifications WHERE nft_category = ? AND nft_commitment = ? AND group_id = ?
-  `).get(nftCategory, nftCommitment, groupId) as Verification | undefined;
-}
-
 export function getVerificationsByAddress(bchAddress: string): Verification[] {
   return db.prepare('SELECT * FROM verifications WHERE bch_address = ?')
     .all(bchAddress) as Verification[];
@@ -193,16 +168,6 @@ export function getVerificationsByAddress(bchAddress: string): Verification[] {
 
 export function deleteVerification(id: number): void {
   db.prepare('DELETE FROM verifications WHERE id = ?').run(id);
-}
-
-export function updateVerificationNft(
-  id: number,
-  nftCategory: string,
-  nftCommitment: string | null
-): void {
-  db.prepare(`
-    UPDATE verifications SET nft_category = ?, nft_commitment = ? WHERE id = ?
-  `).run(nftCategory, nftCommitment, id);
 }
 
 export function deleteVerificationsByUser(telegramUserId: number, groupId?: number): void {
@@ -302,20 +267,16 @@ export function getVerificationsForMonitoring(): Array<{
   id: number;
   telegram_user_id: number;
   group_id: number;
-  nft_category: string | null;
-  nft_commitment: string | null;
   bch_address: string;
   status: 'pending' | 'active';
 }> {
   return db.prepare(`
-    SELECT id, telegram_user_id, group_id, nft_category, nft_commitment, bch_address, COALESCE(status, 'active') as status
+    SELECT id, telegram_user_id, group_id, bch_address, COALESCE(status, 'active') as status
     FROM verifications
   `).all() as Array<{
     id: number;
     telegram_user_id: number;
     group_id: number;
-    nft_category: string | null;
-    nft_commitment: string | null;
     bch_address: string;
     status: 'pending' | 'active';
   }>;

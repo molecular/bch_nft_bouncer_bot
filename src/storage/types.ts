@@ -14,11 +14,9 @@ export interface Verification {
   telegram_user_id: number;
   telegram_username: string | null;
   group_id: number;
-  nft_category: string | null;  // null for pending verifications
-  nft_commitment: string | null;
   bch_address: string;
   verified_at: string;
-  status: 'pending' | 'active';  // pending = waiting for NFT, active = has NFT
+  status: 'pending' | 'active';  // pending = conditions not met, active = conditions met
 }
 
 export interface Challenge {
