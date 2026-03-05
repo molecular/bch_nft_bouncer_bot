@@ -69,21 +69,36 @@ Access rules determine who can join your group:
 1. New members who message the group are prompted to verify
 2. Users click the verification link to start a DM with the bot
 3. Users connect their BCH wallet via WalletConnect (or manual signature)
-4. Bot verifies NFT ownership and grants access
-5. Background monitoring detects when NFTs are transferred and removes access
+4. Bot verifies wallet contents against access conditions and grants access
+5. **Real-time monitoring** detects changes and updates access automatically:
+   - NFT transfers, token balance changes, BCH balance changes
+   - Users are notified of condition status changes via DM
+   - Access is granted/revoked automatically as conditions are met/unmet
 
 ---
 
 ## For Users
 
-### Verifying Your NFT
+### Verifying Your Wallet
 
 1. **Join the group** - You'll receive a verification prompt
 2. **Click the verification link** to start a DM with the bot
 3. **Choose verification method**:
-   - **WalletConnect** (recommended): Send `/wc`, scan the QR code with your BCH wallet (Cashonize, Paytaca, Zapit, etc.)
-   - **Manual**: Send your BCH address, sign the challenge message in your wallet, paste the signature
-4. **Done!** You'll have full access to the group
+   - **WalletConnect** (recommended): Send `/wc`, scan the QR code with your BCH wallet
+   - **Manual**: Send your BCH address, sign the challenge message, paste the signature
+4. **Multi-address support**: If your assets are spread across multiple wallets, you can verify additional addresses to meet all requirements
+5. **Done!** You'll have full access to the group
+
+### User Commands
+
+| Command | Description |
+|---------|-------------|
+| `/verify` | Start or continue verification |
+| `/wc` | Connect wallet via WalletConnect QR code |
+| `/sign` | Resend signature request (after rejection) |
+| `/list_verifications` | Show your verified addresses |
+| `/unverify <id>` | Remove a verified address |
+| `/cancel` | Cancel current verification |
 
 ### Supported Wallets
 

@@ -64,13 +64,19 @@ npm start
 
 ### Using screen (simple)
 
+The included `run_nftbouncer.sh` script handles auto-restart and log rotation:
+
 ```bash
 screen -S nftbouncer
-npm run dev
+./run_nftbouncer.sh
 # Press Ctrl+A, D to detach
 ```
 
 Reattach with `screen -r nftbouncer`.
+
+Logs are stored in `logs/bot-YYYY-MM-DD.log` with `bot.log` symlinked to the current day's log.
+
+To restart the bot (from outside screen): `screen -S nftbouncer -X stuff $'\003'`
 
 ### Using systemd (recommended for production)
 
@@ -138,10 +144,11 @@ The bot uses SQLite, stored at `./data/bot.db` by default. Configure with `DB_PA
 
 Tables:
 - `groups` - Registered groups
-- `group_nft_categories` - NFT categories per group
-- `verifications` - Verified users and their NFT bindings
+- `group_access_rules` - Access conditions (NFT requirements, balance thresholds)
+- `verifications` - Verified user addresses (proves ownership, access computed dynamically)
 - `challenges` - Pending verification challenges
-- `pending_kicks` - Users awaiting verification
+- `pending_kicks` - Users currently restricted (awaiting verification or conditions not met)
+- `token_metadata` - Cached BCMR token metadata
 
 ## Tech Stack
 
