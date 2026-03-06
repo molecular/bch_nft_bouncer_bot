@@ -99,6 +99,7 @@ CREATE TABLE pending_kicks (
   group_id INTEGER NOT NULL,
   kicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   prompt_message_id INTEGER,        -- Message ID of verification prompt in group
+  warned_at DATETIME,               -- When user was warned about impending timeout
   UNIQUE(telegram_user_id, group_id)
 );
 
@@ -199,7 +200,7 @@ nft_entry_bot/
 - [x] Allow verification before acquiring qualifying asset
 - [x] Re-evaluate on address change or group rules change
 - [x] Auto-grant/revoke access based on current conditions
-- [ ] Expiration for pending verifications (optional)
+- [x] Expiration for pending verifications (Phase 9 integration)
 
 ### Phase 7 (Future): Lobby Model
 - [ ] Public lobby for discovery
@@ -213,12 +214,12 @@ nft_entry_bot/
 - [x] Requires bot to have "Delete messages" permission
 - [x] Handle gracefully: message already deleted, >48h old, no permission
 
-### Phase 9 (Future): Kick Unverified Users After Timeout
-- [ ] Track when user was first restricted (pending_kicks table has created_at)
-- [ ] Periodic check for users who've been pending too long (e.g., 1 hour)
-- [ ] Kick users who haven't verified within the timeout
-- [ ] Configurable timeout per group (or global default)
-- [ ] Maybe warn user via DM before kicking
+### Phase 9: Kick Unverified Users After Timeout
+- [x] Track when user was first restricted (pending_kicks table has kicked_at)
+- [x] Periodic check for users who've been pending too long (default 30 min)
+- [x] Kick users who haven't verified within the timeout
+- [x] Configurable timeout via env vars (PENDING_VERIFICATION_TIMEOUT_MINUTES, PENDING_VERIFICATION_WARN_MINUTES)
+- [x] Warn user via DM before kicking (at 20 min by default)
 
 ### Phase 10 (Future): Image Caching
 - [ ] Download and cache token icons/images as blobs in SQLite
@@ -287,6 +288,8 @@ When a user joins a new group, automatically check if they have verified address
 BOT_TOKEN=telegram_bot_token
 WC_PROJECT_ID=walletconnect_project_id
 ELECTRUM_SERVER=wss://... (or default)
+PENDING_VERIFICATION_TIMEOUT_MINUTES=30  # Kick unverified users after this many minutes
+PENDING_VERIFICATION_WARN_MINUTES=20     # Warn users this many minutes before timeout
 ```
 
 ## Verification Testing

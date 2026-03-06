@@ -34,6 +34,7 @@ export interface PendingKick {
   group_id: number;
   kicked_at: string;
   prompt_message_id: number | null;
+  warned_at: string | null;
 }
 
 export interface TokenMetadata {

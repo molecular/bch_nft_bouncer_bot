@@ -139,6 +139,14 @@ export function initializeDatabase(): void {
     console.log('Added prompt_message_id column to pending_kicks');
   }
 
+  // Migration: Add warned_at column to pending_kicks if it doesn't exist
+  const pendingKicksColumns2 = db.prepare("PRAGMA table_info(pending_kicks)").all() as { name: string }[];
+  if (!pendingKicksColumns2.some(col => col.name === 'warned_at')) {
+    console.log('Adding warned_at column to pending_kicks...');
+    db.exec('ALTER TABLE pending_kicks ADD COLUMN warned_at DATETIME');
+    console.log('Added warned_at column to pending_kicks');
+  }
+
   // Migration: Copy data from group_nft_categories to group_access_rules if needed
   const accessRulesCount = db.prepare('SELECT COUNT(*) as count FROM group_access_rules').get() as { count: number };
   const nftCategoriesCount = db.prepare('SELECT COUNT(*) as count FROM group_nft_categories').get() as { count: number };

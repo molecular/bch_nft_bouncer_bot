@@ -7,6 +7,7 @@ import { cleanupExpiredChallenges } from './storage/queries.js';
 import { createBot } from './bot/bot.js';
 import { startMonitoring, stopMonitoring } from './blockchain/monitor.js';
 import { initWalletConnect, closeWalletConnect } from './walletconnect/session.js';
+import { checkPendingKickTimeouts } from './bot/timeouts.js';
 
 async function main(): Promise<void> {
   console.log('🚀 Starting NFT Entry Bot...');
@@ -48,6 +49,11 @@ async function main(): Promise<void> {
   setInterval(() => {
     cleanupExpiredChallenges();
   }, 60 * 60 * 1000); // Every hour
+
+  // Check for pending verification timeouts every 2 minutes
+  setInterval(() => {
+    checkPendingKickTimeouts(bot);
+  }, 2 * 60 * 1000);
 
   // Handle shutdown
   const shutdown = async (signal: string): Promise<void> => {

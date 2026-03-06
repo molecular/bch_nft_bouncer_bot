@@ -260,6 +260,38 @@ export function updatePendingKickMessageId(telegramUserId: number, groupId: numb
     .run(messageId, telegramUserId, groupId);
 }
 
+// Users past timeout threshold
+export function getExpiredPendingKicks(timeoutMinutes: number): (PendingKick & { group_name: string | null })[] {
+  const stmt = db.prepare(`
+    SELECT pk.*, g.name as group_name
+    FROM pending_kicks pk
+    JOIN groups g ON pk.group_id = g.id
+    WHERE datetime(pk.kicked_at, '+' || ? || ' minutes') < datetime('now')
+  `);
+  return stmt.all(timeoutMinutes) as (PendingKick & { group_name: string | null })[];
+}
+
+// Users past warn threshold but not yet warned, and not yet expired
+export function getPendingKicksToWarn(warnMinutes: number, timeoutMinutes: number): (PendingKick & { group_name: string | null })[] {
+  const stmt = db.prepare(`
+    SELECT pk.*, g.name as group_name
+    FROM pending_kicks pk
+    JOIN groups g ON pk.group_id = g.id
+    WHERE datetime(pk.kicked_at, '+' || ? || ' minutes') < datetime('now')
+      AND datetime(pk.kicked_at, '+' || ? || ' minutes') >= datetime('now')
+      AND pk.warned_at IS NULL
+  `);
+  return stmt.all(warnMinutes, timeoutMinutes) as (PendingKick & { group_name: string | null })[];
+}
+
+export function markPendingKickWarned(telegramUserId: number, groupId: number): void {
+  const stmt = db.prepare(`
+    UPDATE pending_kicks SET warned_at = datetime('now')
+    WHERE telegram_user_id = ? AND group_id = ?
+  `);
+  stmt.run(telegramUserId, groupId);
+}
+
 // ============ Monitoring Helpers ============
 
 export function getAllVerifiedAddresses(): string[] {

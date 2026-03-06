@@ -6,6 +6,8 @@ export const config = {
   electrumServer: process.env.ELECTRUM_SERVER || '',
   dbPath: process.env.DB_PATH || './data/bot.db',
   challengeExpiryMinutes: 10,
+  pendingVerificationTimeoutMinutes: parseInt(process.env.PENDING_VERIFICATION_TIMEOUT_MINUTES || '30'),
+  pendingVerificationWarnMinutes: parseInt(process.env.PENDING_VERIFICATION_WARN_MINUTES || '20'),
 };
 
 export function validateConfig(): void {
