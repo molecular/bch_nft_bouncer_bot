@@ -221,11 +221,16 @@ nft_entry_bot/
 - [x] Configurable timeout via env vars (PENDING_VERIFICATION_TIMEOUT_MINUTES, PENDING_VERIFICATION_WARN_MINUTES)
 - [x] Warn user via DM before kicking (at 20 min by default)
 
-### Phase 10 (Future): Image Caching
-- [ ] Download and cache token icons/images as blobs in SQLite
-- [ ] Resolve IPFS URIs to gateway URLs or fetch directly
-- [x] Show NFT info in "user verified" group announcements (text for now)
-- [ ] Attach image to "user verified" announcements
+### Phase 10: NFT Image in Verified Announcements
+- [x] Fix BCMR parsing to extract `uris.icon` and `token.symbol`
+- [x] Resolve IPFS URIs to gateway URLs
+- [x] Image fetching and resizing module (sharp)
+- [x] Show NFT info in "user verified" group announcements
+- [x] Attach image to "user verified" announcements with sendPhoto
+- [x] Graceful fallback to text-only if no image
+
+### Phase 10b (Future): Image Caching
+- [ ] Cache resized images in SQLite to avoid repeated fetches
 - [ ] Periodic refresh for stale images
 
 ### Phase 11: Balance Threshold & Commitment Range Gating

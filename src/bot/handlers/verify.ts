@@ -24,6 +24,7 @@ import {
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
+import { sendVerifiedMessage, type MatchingNftInfo } from '../utils/verification.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
@@ -1073,16 +1074,16 @@ verifyHandlers.command('cancel', async (ctx: Context) => {
   }
 });
 
-interface MatchingNftInfo {
-  category: string;
-  commitment?: string;
+// MatchingNftInfo imported from ../utils/verification.js
+// Extended locally to include label for internal use
+interface MatchingNftInfoWithLabel extends MatchingNftInfo {
   label?: string;
 }
 
 // Helper to extract matching NFT info from checkAccessRules result
 function extractMatchingNft(
   result: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
-): MatchingNftInfo | undefined {
+): MatchingNftInfoWithLabel | undefined {
   const satisfiedNft = result.nftResults.find(r => r.satisfied && r.matchingNft);
   if (satisfiedNft?.matchingNft) {
     return {
@@ -1098,7 +1099,7 @@ async function addUserToGroup(
   ctx: Context,
   userId: number,
   groupId: number,
-  matchingNft?: MatchingNftInfo
+  matchingNft?: MatchingNftInfoWithLabel
 ): Promise<void> {
   console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
   try {
@@ -1117,20 +1118,13 @@ async function addUserToGroup(
       }
     }
 
-    // Send "verified" message to the group
+    // Send "verified" message to the group (with NFT image if available)
     const username = ctx.from?.username
       ? `@${ctx.from.username}`
       : ctx.from?.first_name || 'User';
 
-    let verifiedMsg = `✅ ${username} verified!`;
-    if (matchingNft) {
-      const metadata = await fetchTokenMetadata(matchingNft.category);
-      const nftDisplay = formatNftDisplay(matchingNft.category, matchingNft.commitment || null, metadata);
-      verifiedMsg += ` Found: ${nftDisplay}`;
-    }
-
     try {
-      await ctx.api.sendMessage(groupId, verifiedMsg);
+      await sendVerifiedMessage(ctx.api, groupId, username, matchingNft);
     } catch {
       // May fail if bot can't send to the group
     }

@@ -1,6 +1,6 @@
 import { getProvider } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
-import { fetchTokenMetadata, formatNftDisplay } from './bcmr.js';
+import { sendVerifiedMessage } from '../bot/utils/verification.js';
 import { getVerificationsForMonitoring, deleteVerification, getNftCategories, getGroup, getAllVerifiedAddresses, deletePendingKick, getAccessRules, getPendingKick, addPendingKick } from '../storage/queries.js';
 import { unrestrictUser } from '../bot/utils/permissions.js';
 import { escapeMarkdown } from '../bot/utils/format.js';
@@ -251,7 +251,7 @@ async function grantAccess(
       }
     }
 
-    // Send "verified" message to the group
+    // Send "verified" message to the group (with image if available)
     try {
       // Try to get the user's name
       let username = 'User';
@@ -264,23 +264,19 @@ async function grantAccess(
         // Ignore errors getting user info
       }
 
-      let verifiedMsg = `✅ ${username} verified!`;
-
-      // Add matching NFT info if available
+      // Extract matching NFT info if available
+      let matchingNft: { category: string; commitment?: string } | undefined;
       if (result) {
         const satisfiedNft = result.nftResults.find(r => r.satisfied && r.matchingNft);
         if (satisfiedNft?.matchingNft) {
-          const metadata = await fetchTokenMetadata(satisfiedNft.matchingNft.category);
-          const nftDisplay = formatNftDisplay(
-            satisfiedNft.matchingNft.category,
-            satisfiedNft.matchingNft.commitment || null,
-            metadata
-          );
-          verifiedMsg += ` Found: ${nftDisplay}`;
+          matchingNft = {
+            category: satisfiedNft.matchingNft.category,
+            commitment: satisfiedNft.matchingNft.commitment || undefined,
+          };
         }
       }
 
-      await botInstance.api.sendMessage(verification.group_id, verifiedMsg);
+      await sendVerifiedMessage(botInstance.api, verification.group_id, username, matchingNft);
     } catch {
       // May fail if bot can't send to the group
     }

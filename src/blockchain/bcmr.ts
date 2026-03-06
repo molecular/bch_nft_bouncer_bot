@@ -17,13 +17,23 @@ const PAYTACA_BCMR_API = 'https://bcmr.paytaca.com/api/tokens';
 interface PaytacaTokenResponse {
   category?: string;
   name?: string;
-  symbol?: string;
   description?: string;
+  // Token data is nested under 'token' key
+  token?: {
+    symbol?: string;
+    decimals?: number;
+  };
+  // URIs are nested under 'uris' key
+  uris?: {
+    icon?: string;
+    image?: string;
+    web?: string;
+  };
+  // Legacy flat fields (for backwards compatibility)
+  symbol?: string;
   decimals?: number;
   icon?: string;
   image?: string;
-  web?: string;
-  // NFT types can have more fields, but we only need basics
 }
 
 /**
@@ -58,15 +68,21 @@ export async function fetchTokenMetadata(
 
     const data = await response.json() as PaytacaTokenResponse;
 
+    // Extract fields with fallback to nested and flat paths
+    const symbol = data.token?.symbol || data.symbol || null;
+    const decimals = data.token?.decimals ?? data.decimals ?? null;
+    const iconUri = data.uris?.icon || data.icon || null;
+    const imageUri = data.uris?.image || data.image || null;
+
     // Store in cache
     upsertTokenMetadata(
       category,
       data.name || null,
-      data.symbol || null,
+      symbol,
       data.description || null,
-      data.icon || null,
-      data.image || null,
-      data.decimals ?? null
+      iconUri,
+      imageUri,
+      decimals
     );
 
     return getTokenMetadata(category) || null;
@@ -139,4 +155,31 @@ export async function getFormattedNftDisplay(
 ): Promise<string> {
   const metadata = await fetchTokenMetadata(category);
   return formatNftDisplay(category, commitment, metadata);
+}
+
+/**
+ * Resolve image URI to an HTTP(S) URL.
+ * Handles IPFS URIs by converting to gateway URL.
+ */
+export function resolveImageUri(uri: string | null | undefined): string | null {
+  if (!uri) return null;
+
+  // Already HTTP(S)
+  if (uri.startsWith('http://') || uri.startsWith('https://')) {
+    return uri;
+  }
+
+  // IPFS URI -> gateway URL
+  if (uri.startsWith('ipfs://')) {
+    const cid = uri.replace('ipfs://', '');
+    return `https://ipfs.io/ipfs/${cid}`;
+  }
+
+  // Raw CID (no protocol) - check for common IPFS CID formats
+  if (uri.match(/^Qm[a-zA-Z0-9]{44}/) || uri.match(/^bafy/)) {
+    return `https://ipfs.io/ipfs/${uri}`;
+  }
+
+  // Return as-is, let caller decide what to do
+  return uri;
 }

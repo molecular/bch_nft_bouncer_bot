@@ -1,7 +1,11 @@
 = BUGS/PROBLEMS/FEATURE REQUESTS
 
  * admin-configurable short description for group requirements
-
+ * Pat feature request: also checking a coin lockup in HODL plugin or in VOX vault could be an option.
+ * privacy issue: that's actually a great point. There are no group messages revealing user addresses directly, however, we inform the group about which nft the user used to gain access. Easy to derive address from that. Should I think about a "privacy" mode the user can choose when verifying?
+ * maybe we can use the /wc flow as default and start it right away, offering manual address signing only as a fallback? Consider upsides/downsides
+ * "npm run build" exhibits some errors that do not happen in dev mode. we should fix those?
+ 
 = PENDING TEST
 
 (items awaiting manual testing before considered complete)
