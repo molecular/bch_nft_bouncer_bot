@@ -40,17 +40,16 @@ export async function initWalletConnect(): Promise<SignClient> {
     },
   });
 
-  // Handle session events
-  signClient.on('session_event', (event) => {
-    console.log('WC session event:', event);
+  // Handle session events (minimal logging)
+  signClient.on('session_event', (_event: any) => {
+    // Session events logged only when debugging
   });
 
-  signClient.on('session_update', ({ topic, params }) => {
-    console.log('WC session update:', topic, params);
+  signClient.on('session_update', ({ topic: _topic, params: _params }: any) => {
+    // Session updates logged only when debugging
   });
 
-  signClient.on('session_delete', ({ topic }) => {
-    console.log('WC session deleted:', topic);
+  signClient.on('session_delete', ({ topic }: any) => {
     // Remove from our tracking
     for (const [userId, session] of userSessions.entries()) {
       if (session.topic === topic) {
@@ -60,7 +59,6 @@ export async function initWalletConnect(): Promise<SignClient> {
     }
   });
 
-  console.log('WalletConnect initialized');
   return signClient;
 }
 

@@ -58,6 +58,7 @@ export function initializeDatabase(): void {
       telegram_user_id INTEGER NOT NULL,
       group_id INTEGER NOT NULL,
       kicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      prompt_message_id INTEGER,
       UNIQUE(telegram_user_id, group_id)
     );
 
@@ -128,6 +129,14 @@ export function initializeDatabase(): void {
       CREATE INDEX idx_verifications_address ON verifications(bch_address);
     `);
     console.log('Migrated verifications table to simplified schema');
+  }
+
+  // Migration: Add prompt_message_id column to pending_kicks if it doesn't exist
+  const pendingKicksColumns = db.prepare("PRAGMA table_info(pending_kicks)").all() as { name: string }[];
+  if (!pendingKicksColumns.some(col => col.name === 'prompt_message_id')) {
+    console.log('Adding prompt_message_id column to pending_kicks...');
+    db.exec('ALTER TABLE pending_kicks ADD COLUMN prompt_message_id INTEGER');
+    console.log('Added prompt_message_id column to pending_kicks');
   }
 
   // Migration: Copy data from group_nft_categories to group_access_rules if needed

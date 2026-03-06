@@ -1,5 +1,6 @@
 import { getProvider } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
+import { fetchTokenMetadata, formatNftDisplay } from './bcmr.js';
 import { getVerificationsForMonitoring, deleteVerification, getNftCategories, getGroup, getAllVerifiedAddresses, deletePendingKick, getAccessRules, getPendingKick, addPendingKick } from '../storage/queries.js';
 import { unrestrictUser } from '../bot/utils/permissions.js';
 import { escapeMarkdown } from '../bot/utils/format.js';
@@ -187,7 +188,7 @@ async function checkAddressVerifications(address: string): Promise<void> {
         console.log(`[subscription] User ${verification.telegram_user_id} now qualifies - granting access!`);
         conditionStateCache.set(cacheKey, newStateKey);
         await notifyConditionProgress(verification, rules, result);
-        await grantAccess(verification);
+        await grantAccess(verification, result);
       } else if (!result.satisfied && !isRestricted) {
         // No longer qualifies - restrict
         console.log(`[subscription] User ${verification.telegram_user_id} no longer qualifies - restricting`);
@@ -209,7 +210,8 @@ async function checkAddressVerifications(address: string): Promise<void> {
  * Grant access to user when they meet conditions
  */
 async function grantAccess(
-  verification: { id: number; telegram_user_id: number; group_id: number; bch_address: string }
+  verification: { id: number; telegram_user_id: number; group_id: number; bch_address: string },
+  result?: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
 ): Promise<void> {
   if (!botInstance) {
     console.error('Bot instance not available for granting access');
@@ -217,6 +219,9 @@ async function grantAccess(
   }
 
   try {
+    // Get pending kick info BEFORE deleting (need prompt_message_id)
+    const pendingKick = getPendingKick(verification.telegram_user_id, verification.group_id);
+
     // Remove from pending kicks (marks them as having access)
     deletePendingKick(verification.telegram_user_id, verification.group_id);
 
@@ -235,6 +240,49 @@ async function grantAccess(
 
     if (!isAdmin) {
       await unrestrictUser(botInstance.api, verification.group_id, verification.telegram_user_id);
+    }
+
+    // Delete the verification prompt message from the group
+    if (pendingKick?.prompt_message_id) {
+      try {
+        await botInstance.api.deleteMessage(verification.group_id, pendingKick.prompt_message_id);
+      } catch {
+        // Message may have been deleted or is too old
+      }
+    }
+
+    // Send "verified" message to the group
+    try {
+      // Try to get the user's name
+      let username = 'User';
+      try {
+        const member = await botInstance.api.getChatMember(verification.group_id, verification.telegram_user_id);
+        if ('user' in member && member.user) {
+          username = member.user.username ? `@${member.user.username}` : member.user.first_name;
+        }
+      } catch {
+        // Ignore errors getting user info
+      }
+
+      let verifiedMsg = `✅ ${username} verified!`;
+
+      // Add matching NFT info if available
+      if (result) {
+        const satisfiedNft = result.nftResults.find(r => r.satisfied && r.matchingNft);
+        if (satisfiedNft?.matchingNft) {
+          const metadata = await fetchTokenMetadata(satisfiedNft.matchingNft.category);
+          const nftDisplay = formatNftDisplay(
+            satisfiedNft.matchingNft.category,
+            satisfiedNft.matchingNft.commitment || null,
+            metadata
+          );
+          verifiedMsg += ` Found: ${nftDisplay}`;
+        }
+      }
+
+      await botInstance.api.sendMessage(verification.group_id, verifiedMsg);
+    } catch {
+      // May fail if bot can't send to the group
     }
 
     console.log(`[monitor] Granted access to user ${verification.telegram_user_id} in group ${verification.group_id}`);
@@ -384,7 +432,7 @@ async function checkAllVerifications(): Promise<void> {
       if (result.satisfied) {
         if (isRestricted) {
           // Now qualifies - grant access
-          await grantAccess(verification);
+          await grantAccess(verification, result);
           activated++;
         } else {
           valid++;
@@ -582,7 +630,7 @@ export async function checkGroupVerifications(groupId: number): Promise<{
         await revokeAccess(verification);
       } else if (result.satisfied && isRestricted) {
         valid++;
-        await grantAccess(verification);
+        await grantAccess(verification, result);
       } else {
         valid++;
       }

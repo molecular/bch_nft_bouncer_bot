@@ -340,13 +340,13 @@ adminHandlers.command('list_conditions', async (ctx: Context) => {
   await ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-// /remove_condition <id> - Remove an access rule by ID
+// /remove_condition <id|name> - Remove an access rule by ID or name
 adminHandlers.command('remove_condition', requireGroupAdmin, async (ctx: Context) => {
   const chatId = ctx.chat?.type === 'private' ? null : ctx.chat?.id;
   const args = (ctx.match as string || '').trim();
 
   if (!args) {
-    await ctx.reply('Usage: `/remove_condition <id>`\n\nUse `/list_conditions` to see IDs.', { parse_mode: 'Markdown' });
+    await ctx.reply('Usage: `/remove_condition <id or name>`\n\nUse `/list_conditions` to see conditions.', { parse_mode: 'Markdown' });
     return;
   }
 
@@ -355,27 +355,92 @@ adminHandlers.command('remove_condition', requireGroupAdmin, async (ctx: Context
     return;
   }
 
+  let rule: AccessRule | undefined;
+
+  // Try to parse as a numeric ID first
   const ruleId = parseInt(args, 10);
-  if (isNaN(ruleId)) {
-    await ctx.reply('Invalid ID. Must be a number.');
-    return;
+  if (!isNaN(ruleId)) {
+    rule = getAccessRuleById(ruleId);
+    if (rule && rule.group_id !== chatId) {
+      await ctx.reply('This condition does not belong to this group.');
+      return;
+    }
   }
 
-  // Verify the rule exists and belongs to this group
-  const rule = getAccessRuleById(ruleId);
+  // If not found by ID, try to match by label or symbol
+  if (!rule) {
+    const allRules = getAccessRules(chatId!);
+    const searchTerm = args.toLowerCase();
+
+    // Find rules that match the search term (case-insensitive)
+    const matchingRules = allRules.filter(r => {
+      // Match by label
+      if (r.label?.toLowerCase().includes(searchTerm)) return true;
+      // Match by category (if it starts with the search term)
+      if (r.category?.toLowerCase().startsWith(searchTerm)) return true;
+      return false;
+    });
+
+    if (matchingRules.length === 0) {
+      // No matches - try fetching metadata for token symbol matching
+      const rulesWithMetadata: { rule: AccessRule; symbol?: string; name?: string }[] = [];
+      for (const r of allRules) {
+        if (r.category && r.category !== 'BCH') {
+          const metadata = await fetchTokenMetadata(r.category);
+          rulesWithMetadata.push({
+            rule: r,
+            symbol: metadata?.symbol?.toLowerCase(),
+            name: metadata?.name?.toLowerCase(),
+          });
+        } else {
+          rulesWithMetadata.push({ rule: r });
+        }
+      }
+
+      const metadataMatches = rulesWithMetadata.filter(rm =>
+        rm.symbol?.includes(searchTerm) || rm.name?.includes(searchTerm)
+      );
+
+      if (metadataMatches.length === 1) {
+        rule = metadataMatches[0].rule;
+      } else if (metadataMatches.length > 1) {
+        // Multiple matches - list them
+        let msg = `Multiple conditions match "${args}":\n\n`;
+        for (const rm of metadataMatches) {
+          const displayName = rm.rule.label || rm.symbol || rm.name || rm.rule.category?.slice(0, 12);
+          msg += `• [${rm.rule.id}] ${displayName}\n`;
+        }
+        msg += `\nUse the ID number to remove a specific condition.`;
+        await ctx.reply(msg);
+        return;
+      } else {
+        await ctx.reply(`No condition found matching "${args}".\n\nUse \`/list_conditions\` to see available conditions.`, { parse_mode: 'Markdown' });
+        return;
+      }
+    } else if (matchingRules.length === 1) {
+      rule = matchingRules[0];
+    } else {
+      // Multiple matches by label - list them
+      let msg = `Multiple conditions match "${args}":\n\n`;
+      for (const r of matchingRules) {
+        const displayName = r.label || r.category?.slice(0, 12);
+        msg += `• [${r.id}] ${displayName}\n`;
+      }
+      msg += `\nUse the ID number to remove a specific condition.`;
+      await ctx.reply(msg);
+      return;
+    }
+  }
+
   if (!rule) {
     await ctx.reply('Condition not found.');
     return;
   }
 
-  if (rule.group_id !== chatId) {
-    await ctx.reply('This condition does not belong to this group.');
-    return;
-  }
+  const displayName = rule.label || rule.category?.slice(0, 12) || `#${rule.id}`;
+  removeAccessRule(rule.id);
 
-  removeAccessRule(ruleId);
-
-  await ctx.reply(`✅ Condition #${ruleId} removed. Checking affected verifications...`);
+  await ctx.reply(`✅ Condition "${displayName}" (ID: ${rule.id}) removed. Checking affected verifications...`);
 
   // Check all verifications for this group
   const result = await checkGroupVerifications(chatId!);
@@ -487,7 +552,7 @@ adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
     `/add\\_condition nft <cat> [label] [start] [end] - NFT with optional commitment range\n` +
     `/add\\_condition balance <amount> <BCH|cat> - BCH or token balance\n` +
     `/list\\_conditions - List all access conditions\n` +
-    `/remove\\_condition <id> - Remove a condition by ID\n\n` +
+    `/remove\\_condition <id or name> - Remove a condition by ID or name\n\n` +
     `**Management:**\n` +
     `/scan - Re-check all verified users now\n\n` +
     `**Access Logic:**\n` +

@@ -255,6 +255,11 @@ export function deletePendingKick(telegramUserId: number, groupId: number): void
     .run(telegramUserId, groupId);
 }
 
+export function updatePendingKickMessageId(telegramUserId: number, groupId: number, messageId: number): void {
+  db.prepare('UPDATE pending_kicks SET prompt_message_id = ? WHERE telegram_user_id = ? AND group_id = ?')
+    .run(messageId, telegramUserId, groupId);
+}
+
 // ============ Monitoring Helpers ============
 
 export function getAllVerifiedAddresses(): string[] {

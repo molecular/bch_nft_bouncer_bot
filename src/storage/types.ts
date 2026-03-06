@@ -33,6 +33,7 @@ export interface PendingKick {
   telegram_user_id: number;
   group_id: number;
   kicked_at: string;
+  prompt_message_id: number | null;
 }
 
 export interface TokenMetadata {

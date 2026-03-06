@@ -193,7 +193,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
       deletePendingKick(userId, groupId);
       verificationState.delete(userId);
       await ctx.reply(msg, { parse_mode: 'Markdown' });
-      await addUserToGroup(ctx, userId, groupId);
+      await addUserToGroup(ctx, userId, groupId, extractMatchingNft(result));
       return;
     }
 
@@ -442,6 +442,9 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       msg += '\nYou now have full access to the group!';
 
       await ctx.reply(msg, { parse_mode: 'Markdown' });
+
+      // Try to add user back to group
+      await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
     } else {
       // Show progress
       let msg = '✅ **Address verified!**\n\n';
@@ -454,9 +457,6 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       state.step = 'address';
       return; // Don't add to group yet
     }
-
-    // Try to add user back to group
-    await addUserToGroup(ctx, userId, state.groupId);
 
     await disconnectSession(userId);
     verificationState.delete(userId);
@@ -552,7 +552,7 @@ async function handleWcVerification(
               await formatRequirementsMessage(rules, result),
               { parse_mode: 'Markdown' }
             );
-            await addUserToGroup(ctx, userId, state.groupId);
+            await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
             verificationState.delete(userId);
           } else {
             // Still pending - show progress
@@ -571,10 +571,10 @@ async function handleWcVerification(
         }
 
         // Get access rules and check this address + existing verifications
-        const rules = getAccessRules(state.groupId);
-        const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
-        const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), address])];
-        const result = await checkAccessRulesMultiAddress(allAddresses, rules);
+        const rules2 = getAccessRules(state.groupId);
+        const existingVerifications2 = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+        const allAddresses2 = [...new Set([...existingVerifications2.map(v => v.bch_address), address])];
+        const result2 = await checkAccessRulesMultiAddress(allAddresses2, rules2);
 
         // Store address for signature verification
         state.address = address;
@@ -612,7 +612,7 @@ async function handleWcVerification(
           await disconnectSession(userId);
 
           // Check if all requirements are met
-          if (result.satisfied) {
+          if (result2.satisfied) {
             deletePendingKick(userId, state.groupId);
 
             await ctx.reply(
@@ -621,19 +621,19 @@ async function handleWcVerification(
               { parse_mode: 'Markdown' }
             );
 
-            await addUserToGroup(ctx, userId, state.groupId);
+            await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result2));
             verificationState.delete(userId);
           } else {
             // Show progress
             let msg = '✅ **Address verified!**\n\n';
             msg += `Address: \`${address.slice(0, 20)}...\`\n\n`;
             msg += '**Condition Progress:**\n\n';
-            msg += await formatRequirementsMessage(rules, result);
+            msg += await formatRequirementsMessage(rules2, result2);
 
             // Show what's still needed
-            if (result.nftSatisfied && !result.balanceSatisfied) {
+            if (result2.nftSatisfied && !result2.balanceSatisfied) {
               msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
-            } else if (!result.nftSatisfied && result.balanceSatisfied) {
+            } else if (!result2.nftSatisfied && result2.balanceSatisfied) {
               msg += `_Balance requirement satisfied! Still need an NFT condition._\n\n`;
             } else {
               msg += `_Still need requirements - verify another address._\n\n`;
@@ -782,7 +782,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
           await formatRequirementsMessage(rules, result),
           { parse_mode: 'Markdown' }
         );
-        await addUserToGroup(ctx, userId, state.groupId);
+        await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
         verificationState.delete(userId);
       } else {
         // Still pending - show progress
@@ -897,7 +897,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
         { parse_mode: 'Markdown' }
       );
 
-      await addUserToGroup(ctx, userId, state.groupId);
+      await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
       verificationState.delete(userId);
     } else {
       // Show progress
@@ -1073,13 +1073,69 @@ verifyHandlers.command('cancel', async (ctx: Context) => {
   }
 });
 
-async function addUserToGroup(ctx: Context, userId: number, groupId: number): Promise<void> {
+interface MatchingNftInfo {
+  category: string;
+  commitment?: string;
+  label?: string;
+}
+
+// Helper to extract matching NFT info from checkAccessRules result
+function extractMatchingNft(
+  result: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
+): MatchingNftInfo | undefined {
+  const satisfiedNft = result.nftResults.find(r => r.satisfied && r.matchingNft);
+  if (satisfiedNft?.matchingNft) {
+    return {
+      category: satisfiedNft.matchingNft.category,
+      commitment: satisfiedNft.matchingNft.commitment || undefined,
+      label: satisfiedNft.rule.label || undefined,
+    };
+  }
+  return undefined;
+}
+
+async function addUserToGroup(
+  ctx: Context,
+  userId: number,
+  groupId: number,
+  matchingNft?: MatchingNftInfo
+): Promise<void> {
   console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
   try {
+    // Get pending kick info before deleting (we need the prompt_message_id)
+    const pendingKick = getPendingKick(userId, groupId);
+
     await unrestrictUser(ctx.api, groupId, userId);
     console.log(`[addUserToGroup] Successfully unrestricted user ${userId}`);
 
-    // Try to get a link to the group
+    // Delete the verification prompt message from the group if we have the message ID
+    if (pendingKick?.prompt_message_id) {
+      try {
+        await ctx.api.deleteMessage(groupId, pendingKick.prompt_message_id);
+      } catch {
+        // Message may have already been deleted or too old
+      }
+    }
+
+    // Send "verified" message to the group
+    const username = ctx.from?.username
+      ? `@${ctx.from.username}`
+      : ctx.from?.first_name || 'User';
+
+    let verifiedMsg = `✅ ${username} verified!`;
+    if (matchingNft) {
+      const metadata = await fetchTokenMetadata(matchingNft.category);
+      const nftDisplay = formatNftDisplay(matchingNft.category, matchingNft.commitment || null, metadata);
+      verifiedMsg += ` Found: ${nftDisplay}`;
+    }
+
+    try {
+      await ctx.api.sendMessage(groupId, verifiedMsg);
+    } catch {
+      // May fail if bot can't send to the group
+    }
+
+    // Try to get a link to the group for the DM
     let groupLink = '';
     try {
       const chat = await ctx.api.getChat(groupId);

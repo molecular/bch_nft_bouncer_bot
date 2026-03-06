@@ -7,6 +7,7 @@ import {
   addPendingKick,
   getPendingKick,
   getNftCategories,
+  updatePendingKickMessageId,
 } from '../../storage/queries.js';
 import { restrictUser, unrestrictUser, unrestrictIfNeeded } from '../utils/permissions.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
@@ -106,13 +107,14 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     const metadataResults = await Promise.all(categories.map(cat => fetchTokenMetadata(cat)));
     const categoryList = categories.map((cat, i) => formatTokenName(cat, metadataResults[i])).join(', ');
 
-    // Post message in group
-    await ctx.api.sendMessage(
+    // Post message in group and store the message ID
+    const promptMessage = await ctx.api.sendMessage(
       chatId,
       `👋 ${username} - This group requires wallet verification.\n\n` +
       `Requirements: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
+    updatePendingKickMessageId(userId, chatId, promptMessage.message_id);
 
     // Also try to DM (no Markdown - bot username has underscores that break links)
     try {
@@ -236,13 +238,14 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     const metadataResults = await Promise.all(categories.map(cat => fetchTokenMetadata(cat)));
     const categoryList = categories.map((cat, i) => formatTokenName(cat, metadataResults[i])).join(', ');
 
-    // Notify in group
-    await ctx.api.sendMessage(
+    // Notify in group and store the message ID
+    const promptMessage = await ctx.api.sendMessage(
       chatId,
       `⚠️ ${username} - You must verify your wallet meets the access requirements.\n\n` +
       `Requirements: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
+    updatePendingKickMessageId(userId, chatId, promptMessage.message_id);
 
   } catch (error: any) {
     console.error(`Error handling unverified message from ${userId}:`, error.message);
