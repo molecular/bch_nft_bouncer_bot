@@ -252,6 +252,24 @@ Support gating by asset balances and NFT commitment ranges.
 - [x] `/add_condition balance <amount> <BCH|cat>` command
 - [x] `/remove_condition` accepts ID or name matching
 
+### Phase 12 (Future): Cross-Group Verification Reuse
+When a user joins a new group, automatically check if they have verified addresses elsewhere that qualify for access.
+
+**Problem:** Users must verify separately for each group, even with the same address.
+
+**Approach: Auto-reuse on join**
+- When user joins a group, check all their verified addresses (from any group)
+- If any address satisfies the new group's conditions, auto-grant access
+- Keep `group_id` in verifications table for per-group control
+- User can `/unverify` if they don't want reuse
+
+**Implementation:**
+- [ ] Query all user's verified addresses across groups on join
+- [ ] Check each address against new group's access rules
+- [ ] If qualifying address found, create verification for new group + grant access
+- [ ] Skip the kick/DM flow entirely for reused verifications
+- [ ] Log reuse events for transparency
+
 ## Key Dependencies
 ```json
 {
