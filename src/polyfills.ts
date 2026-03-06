@@ -4,7 +4,7 @@
 import { Crypto } from '@peculiar/webcrypto';
 
 if (!globalThis.crypto) {
-  globalThis.crypto = new Crypto();
+  globalThis.crypto = new Crypto() as unknown as typeof globalThis.crypto;
 }
 
 // Also ensure getRandomValues is available

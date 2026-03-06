@@ -447,7 +447,7 @@ async function checkAllVerifications(): Promise<void> {
                 await botInstance.api.restrictChatMember(
                   verification.group_id,
                   verification.telegram_user_id,
-                  { permissions: { can_send_messages: false } }
+                  { can_send_messages: false }
                 );
                 console.log(`[monitor] Restricted user ${verification.telegram_user_id} in group ${verification.group_id}`);
               }
@@ -520,7 +520,7 @@ async function revokeAccess(verification: {
       await botInstance.api.restrictChatMember(
         verification.group_id,
         verification.telegram_user_id,
-        { permissions: { can_send_messages: false } }
+        { can_send_messages: false }
       );
       console.log(`[monitor] Revoked access for user ${verification.telegram_user_id} in group ${verification.group_id}`);
     } catch (restrictError) {

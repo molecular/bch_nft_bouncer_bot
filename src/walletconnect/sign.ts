@@ -35,7 +35,7 @@ export async function requestAddresses(telegramUserId: number): Promise<BchAddre
       if (result.length > 0) {
         if (typeof result[0] === 'string') {
           // Format: ["bitcoincash:qp..."]
-          addresses = result as string[];
+          addresses = result as unknown as string[];
         } else if (typeof result[0] === 'object' && result[0].address) {
           // Format: [{ address: "bitcoincash:qp..." }]
           addresses = (result as BchAddressInfo[]).map(a => a.address);

@@ -1,7 +1,7 @@
 import { SignClient } from '@walletconnect/sign-client';
 import { config } from '../config.js';
 
-let signClient: SignClient | null = null;
+let signClient: InstanceType<typeof SignClient> | null = null;
 
 // Active sessions mapped by Telegram user ID
 const userSessions: Map<number, {
@@ -21,7 +21,7 @@ const pendingPairings: Map<string, {
 // Track rejected pairings so polling can detect them
 const rejectedPairings: Map<number, { message: string; code: number }> = new Map();
 
-export async function initWalletConnect(): Promise<SignClient> {
+export async function initWalletConnect(): Promise<InstanceType<typeof SignClient>> {
   if (signClient) {
     return signClient;
   }
@@ -62,7 +62,7 @@ export async function initWalletConnect(): Promise<SignClient> {
   return signClient;
 }
 
-export async function getSignClient(): Promise<SignClient> {
+export async function getSignClient(): Promise<InstanceType<typeof SignClient>> {
   if (!signClient) {
     return initWalletConnect();
   }
@@ -120,7 +120,7 @@ export async function createPairing(
   });
 
   // Handle approval asynchronously
-  approval().then((session) => {
+  approval().then((session: any) => {
     const pending = pendingPairings.get(pairingTopic);
     if (pending) {
       pendingPairings.delete(pairingTopic);
@@ -134,7 +134,7 @@ export async function createPairing(
 
       pending.resolve(session);
     }
-  }).catch((error) => {
+  }).catch((error: any) => {
     const pending = pendingPairings.get(pairingTopic);
     if (pending) {
       pendingPairings.delete(pairingTopic);

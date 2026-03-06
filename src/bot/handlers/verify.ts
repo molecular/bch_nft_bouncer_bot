@@ -1024,7 +1024,7 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
         // User no longer qualifies - restrict them
         try {
           await ctx.api.restrictChatMember(groupId, userId, {
-            permissions: { can_send_messages: false }
+            can_send_messages: false
           });
           // Add pending kick to track restricted status
           addPendingKick(userId, groupId);
@@ -1038,7 +1038,7 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
     // No more verifications for this group - restrict user
     try {
       await ctx.api.restrictChatMember(groupId, userId, {
-        permissions: { can_send_messages: false }
+        can_send_messages: false
       });
       // Add pending kick to prevent group message spam
       addPendingKick(userId, groupId);

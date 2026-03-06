@@ -276,6 +276,26 @@ When a user joins a new group, automatically check if they have verified address
 - [ ] Skip the kick/DM flow entirely for reused verifications
 - [ ] Log reuse events for transparency
 
+### Phase 13 (Future): HODL/VOX Vault Verification
+Support checking coin lockups in HODL plugin or VOX vault as access conditions.
+- [ ] Research HODL plugin API/contract structure
+- [ ] Research VOX vault API/contract structure
+- [ ] Add 'lockup' rule type to group_access_rules
+- [ ] Implement lockup balance checking
+
+### Phase 14 (Future): Privacy Mode
+User-selectable privacy mode that hides which specific NFT was used for verification.
+- [ ] Add privacy preference to verifications table
+- [ ] Offer privacy toggle during verification flow
+- [ ] "✅ @user verified!" only (no NFT details) when enabled
+- [ ] Group admin option to require/disable privacy mode
+
+### Phase 15 (Future): Optional NFT Image/Commitment Display
+Admin toggle for showing NFT images and/or commitment IDs in verification announcements.
+- [ ] Add display settings to groups table (show_nft_image, show_commitment)
+- [ ] Admin commands to configure display options
+- [ ] Respect settings in sendVerifiedMessage()
+
 ## Key Dependencies
 ```json
 {
