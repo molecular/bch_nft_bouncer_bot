@@ -1070,7 +1070,7 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
       });
       // Add pending kick to prevent group message spam
       addPendingKick(userId, groupId);
-      restrictedMsg = `\n\n⚠️ You no longer have any verified addresses for this group and have been restricted.`;
+      restrictedMsg = `\n\n⚠️ You no longer have any verified addresses for this group and have been restricted. Use /verify (or leave and re-join the group) to verify.`;
     } catch (e) {
       // May fail if bot doesn't have permission or user left
     }
