@@ -174,7 +174,7 @@ nft_entry_bot/
 
 ### Phase 4: Admin & Config
 - [x] Per-group NFT category configuration
-- [x] Admin commands (/setnft, /status)
+- [x] Admin commands (/setnft, /groupinfo)
 - [x] Multiple groups support
 
 ### Phase 5: Transfer Monitoring + Auto-Kick
@@ -265,6 +265,12 @@ Support gating by asset balances and NFT commitment ranges.
 - [x] `/add_condition balance <amount> <BCH|cat>` command
 - [x] `/remove_condition` accepts ID or name matching
 - [x] Aggregate balances across multiple verified addresses (not per-address check)
+
+### Phase 11.5: User Status Command
+- [x] `/status` command for users to check condition fulfillment
+- [x] In DM: shows status for all groups user has verifications for
+- [x] In group: sends status via DM, deletes command from group
+- [x] Reuses `formatRequirementsMessage()` for consistent display
 
 ### Phase 12 (Future): Cross-Group Verification Reuse
 When a user joins a new group, automatically check if they have verified addresses elsewhere that qualify for access.
