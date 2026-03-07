@@ -983,6 +983,112 @@ verifyHandlers.command('list_verifications', async (ctx: Context) => {
   await ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
+// /status - Show condition fulfillment status for user
+verifyHandlers.command('status', async (ctx: Context) => {
+  const userId = ctx.from!.id;
+  const chatType = ctx.chat?.type;
+  const chatId = ctx.chat?.id;
+
+  if (chatType === 'private') {
+    // DM: Show status for all groups user has verifications for
+    const verifications = getVerificationsForUser(userId);
+
+    if (verifications.length === 0) {
+      await ctx.reply(
+        'You have no verifications yet.\n\n' +
+        'Join a gated group or use /verify to get started.'
+      );
+      return;
+    }
+
+    // Get unique groups
+    const groupIds = [...new Set(verifications.map(v => v.group_id))];
+
+    let msg = '📊 **Your verification status:**\n\n';
+
+    for (const groupId of groupIds) {
+      const group = getGroup(groupId);
+      const groupName = group?.name || `Group ${groupId}`;
+      const rules = getAccessRules(groupId);
+
+      msg += `**${groupName}**\n`;
+
+      if (rules.length === 0) {
+        msg += `_No conditions configured_\n\n`;
+        continue;
+      }
+
+      // Get user's addresses for this group
+      const userAddresses = verifications
+        .filter(v => v.group_id === groupId)
+        .map(v => v.bch_address);
+
+      const result = await checkAccessRulesMultiAddress(userAddresses, rules);
+
+      msg += await formatRequirementsMessage(rules, result);
+
+      if (result.satisfied) {
+        msg += `✅ _Access granted_\n\n`;
+      } else {
+        msg += `⏳ _Requirements not met_\n\n`;
+      }
+    }
+
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  } else {
+    // In group: Show status for this group via DM
+    if (!chatId) return;
+
+    // Delete the command message from the group
+    try {
+      await ctx.deleteMessage();
+    } catch {
+      // May fail if bot lacks delete permission or message is old
+    }
+
+    const rules = getAccessRules(chatId);
+
+    if (rules.length === 0) {
+      try {
+        await ctx.api.sendMessage(userId, 'This group has no access conditions configured.');
+      } catch {
+        await ctx.reply('Please start a DM with me first, then try again.');
+      }
+      return;
+    }
+
+    const verifications = getVerificationsForUser(userId).filter(v => v.group_id === chatId);
+    const group = getGroup(chatId);
+    const groupName = group?.name || 'This group';
+
+    let msg = `📊 **${groupName} status:**\n\n`;
+
+    if (verifications.length === 0) {
+      // User has no verifications for this group
+      msg += await formatRequirementsMessage(rules, null);
+      msg += `\n_You have no verified addresses for this group._\n`;
+      msg += `_Use /verify to verify your wallet._`;
+    } else {
+      const userAddresses = verifications.map(v => v.bch_address);
+      const result = await checkAccessRulesMultiAddress(userAddresses, rules);
+
+      msg += await formatRequirementsMessage(rules, result);
+
+      if (result.satisfied) {
+        msg += `✅ _Access granted_`;
+      } else {
+        msg += `⏳ _Requirements not met_`;
+      }
+    }
+
+    try {
+      await ctx.api.sendMessage(userId, msg, { parse_mode: 'Markdown' });
+    } catch {
+      await ctx.reply('Please start a DM with me first, then try again.');
+    }
+  }
+});
+
 // /unverify - Remove a verification
 verifyHandlers.command('unverify', async (ctx: Context) => {
   if (ctx.chat?.type !== 'private') {

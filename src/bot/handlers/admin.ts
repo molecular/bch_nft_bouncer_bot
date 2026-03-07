@@ -56,7 +56,7 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
     `Group: ${chatTitle}\n` +
     `ID: ${chatId}\n\n` +
     (configured
-      ? 'NFT categories are already configured. Use /status to view them.'
+      ? 'NFT categories are already configured. Use /groupinfo to view them.'
       : 'Next step: Add NFT categories with /add\\_category <category\\_id>') +
     `\n\n**Verification link for existing members:**\n${deepLinkEscaped}`,
     { parse_mode: 'Markdown' }
@@ -456,8 +456,8 @@ adminHandlers.command('remove_condition', requireGroupAdmin, async (ctx: Context
   }
 });
 
-// /status - Show group configuration
-adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
+// /groupinfo - Show group configuration (admin only)
+adminHandlers.command('groupinfo', requireGroupAdmin, async (ctx: Context) => {
   if (ctx.chat?.type === 'private') {
     await ctx.reply('This command must be used in a group.');
     return;
@@ -497,9 +497,9 @@ adminHandlers.command('status', requireGroupAdmin, async (ctx: Context) => {
   }
 
   if (rules.length === 0) {
-    statusMsg += '_No conditions configured. Use /add\\_condition to add one._';
+    statusMsg += 'No conditions configured. Use `/add_condition` to add one.';
   } else {
-    statusMsg += '\n_Use /list\\_conditions for details._';
+    statusMsg += '\nUse `/list_conditions` for details.';
   }
 
   await ctx.reply(statusMsg, { parse_mode: 'Markdown' });
@@ -547,7 +547,7 @@ adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
     `🔧 **Admin Commands**\n\n` +
     `**Setup:**\n` +
     `/setup - Initialize bot for this group\n` +
-    `/status - Show group configuration summary\n\n` +
+    `/groupinfo - Show group configuration summary\n\n` +
     `**Access Conditions:**\n` +
     `/add\\_condition nft <cat> [label] [start] [end] - NFT with optional commitment range\n` +
     `/add\\_condition balance <amount> <BCH|cat> - BCH or token balance\n` +
