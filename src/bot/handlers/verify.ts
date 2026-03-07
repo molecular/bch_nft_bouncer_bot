@@ -349,7 +349,7 @@ async function startWalletConnectFlow(
     // Send QR code
     await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
       caption:
-        '📱 **Scan with your BCH wallet** (Paytaca, Cashonize)\n\n' +
+        '📱 **Scan with your BCH wallet** (Paytaca, Cashonize, ...)\n\n' +
         'Or copy this link:',
       parse_mode: 'Markdown',
     });
@@ -773,6 +773,12 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
   if (text.startsWith('/')) return next();
 
   if (!state) return;
+
+  // Accept addresses during wc_waiting state (user chose manual fallback)
+  if (state.step === 'wc_waiting' && isValidBchAddress(text)) {
+    // Switch to manual flow
+    state.step = 'address';
+  }
 
   if (state.step === 'address') {
     // User is sending their address
