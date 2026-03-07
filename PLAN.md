@@ -202,6 +202,13 @@ nft_entry_bot/
 - [x] Auto-grant/revoke access based on current conditions
 - [x] Expiration for pending verifications (Phase 9 integration)
 
+### Phase 6.7: WalletConnect as Default Flow
+- [x] Auto-start WalletConnect QR code when user begins verification
+- [x] Show QR code image + URI for copy-paste immediately
+- [x] Clear fallback message for manual address signing
+- [x] Accept BCH address during WC polling to switch to manual flow
+- [x] /wc command still available for retries or adding more addresses
+
 ### Phase 7 (Future): Lobby Model
 - [ ] Public lobby for discovery
 - [ ] Route verified users to appropriate private groups
