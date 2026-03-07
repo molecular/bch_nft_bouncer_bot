@@ -1,2 +1,2 @@
 = BUGS/PROBLEMS/FEATURE REQUESTS
-
+* investigate implementation of privacy mode (either on group level configurable by admin or on verification level or both). It would remove all data that enables identifying user address(es) from group messaging (for example NFT images, NFT commitment)

@@ -93,7 +93,7 @@ async function subscribeToAddress(address: string): Promise<void> {
         return;
       }
 
-      console.log(`[monitor] Address change: ${address.slice(0, 25)}...`);
+      console.log(`[monitor] Address change: ${address}`);
 
       // Check all verifications for this address
       await checkAddressVerifications(address);
@@ -101,7 +101,7 @@ async function subscribeToAddress(address: string): Promise<void> {
 
     addressSubscriptions.set(address, cancel);
   } catch (error) {
-    console.error(`[monitor] Failed to subscribe to ${address.slice(0, 25)}...:`, error);
+    console.error(`[monitor] Failed to subscribe to ${address}:`, error);
   }
 }
 
@@ -115,7 +115,7 @@ export async function addAddressToMonitor(address: string): Promise<void> {
 
   addressAddedTimes.set(address, Date.now());
   await subscribeToAddress(address);
-  console.log(`[monitor] Now monitoring ${address.slice(0, 25)}... (${addressSubscriptions.size} total)`);
+  console.log(`[monitor] Now monitoring ${address} (${addressSubscriptions.size} total)`);
 }
 
 /**
@@ -131,7 +131,7 @@ export function removeAddressFromMonitor(address: string): void {
     }
     addressSubscriptions.delete(address);
     addressAddedTimes.delete(address);
-    console.log(`[monitor] Stopped monitoring ${address.slice(0, 25)}... (${addressSubscriptions.size} remaining)`);
+    console.log(`[monitor] Stopped monitoring ${address} (${addressSubscriptions.size} remaining)`);
   }
 }
 
@@ -143,7 +143,7 @@ async function checkAddressVerifications(address: string): Promise<void> {
     v => v.bch_address === address
   );
 
-  console.log(`[subscription] Checking ${verifications.length} verifications for ${address.slice(0, 25)}...`);
+  console.log(`[subscription] Checking ${verifications.length} verifications for ${address}`);
 
   // Group by user+group to avoid duplicate checks
   const userGroupMap = new Map<string, typeof verifications[0]>();
@@ -525,6 +525,20 @@ async function revokeAccess(verification: {
       console.log(`[monitor] Revoked access for user ${verification.telegram_user_id} in group ${verification.group_id}`);
     } catch (restrictError) {
       console.error('Could not restrict user:', restrictError);
+    }
+
+    // Send "restricted" message to the group
+    try {
+      let username = 'User';
+      if ('user' in member && member.user) {
+        username = member.user.username ? `@${member.user.username}` : member.user.first_name;
+      }
+      await botInstance.api.sendMessage(
+        verification.group_id,
+        `🚫 ${username} restricted (no longer meets requirements)`,
+      );
+    } catch {
+      // May fail if bot can't send to the group
     }
 
     // Notify the user
