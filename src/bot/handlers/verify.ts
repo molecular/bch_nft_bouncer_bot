@@ -212,15 +212,18 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     msg += await formatRequirementsMessage(rules, null);
   }
 
-  msg += `\n**Choose verification method:**\n\n`;
-  msg += `1️⃣ **WalletConnect** (recommended)\n`;
-  msg += `   Send /wc to connect your wallet via QR code\n\n`;
-  msg += `2️⃣ **Manual Signature**\n`;
-  msg += `   Send your BCH address\n`;
-  msg += `   Example: \`bitcoincash:qr...\`\n\n`;
-  msg += `_You can verify multiple addresses if your assets are spread across wallets._`;
-
-  await ctx.reply(msg, { parse_mode: 'Markdown' });
+  if (config.wcProjectId) {
+    // WalletConnect is configured - send requirements first, then start WC flow automatically
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+    const state = verificationState.get(userId)!;
+    await startWalletConnectFlow(ctx, userId, state);
+  } else {
+    // No WC configured - show manual-only instructions
+    msg += `\n**To verify:**\nSend your BCH address\n`;
+    msg += `Example: \`bitcoincash:qr...\`\n\n`;
+    msg += `_You can verify multiple addresses if needed._`;
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+  }
 }
 
 // Helper to format requirements with status (exported for use in monitor)
@@ -321,7 +324,63 @@ function formatSatisfiedConditions(
   return msg;
 }
 
-// /wc - Start WalletConnect flow
+// Helper to start WalletConnect flow (used by both startVerification and /wc command)
+async function startWalletConnectFlow(
+  ctx: Context,
+  userId: number,
+  state: NonNullable<ReturnType<typeof verificationState.get>>
+): Promise<void> {
+  // Disconnect any existing session and clear any pending rejection
+  await disconnectSession(userId);
+  checkAndClearRejection(userId);
+
+  try {
+    await ctx.reply('🔗 Connecting via WalletConnect...');
+
+    const { uri, pairingTopic } = await createPairing(userId, state.groupId);
+
+    // Generate QR code
+    const qrBuffer = await generateQRBuffer(uri);
+
+    // Update state
+    state.step = 'wc_waiting';
+    state.wcPairingTopic = pairingTopic;
+
+    // Send QR code
+    await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
+      caption:
+        '📱 **Scan with your BCH wallet** (Paytaca, Cashonize)\n\n' +
+        'Or copy this link:',
+      parse_mode: 'Markdown',
+    });
+
+    // Send URI in monospace for easy copying
+    await ctx.reply(`\`${uri}\``, { parse_mode: 'Markdown' });
+
+    // Fallback option - prominent message for users without WC wallets
+    await ctx.reply(
+      '💡 **Not using WalletConnect?**\n' +
+      'Send your BCH address for manual verification:\n' +
+      'Example: `bitcoincash:qr...`',
+      { parse_mode: 'Markdown' }
+    );
+
+    // Start polling for wallet connection
+    handleWcVerification(ctx, userId, state);
+
+  } catch (error) {
+    console.error('WalletConnect flow error:', error);
+    // Fall back gracefully
+    state.step = 'address';
+    await ctx.reply(
+      '⚠️ WalletConnect unavailable.\n\n' +
+      'Send your BCH address for manual verification:\n' +
+      'Example: `bitcoincash:qr...`'
+    );
+  }
+}
+
+// /wc - Start WalletConnect flow (for retries or adding another address)
 verifyHandlers.command('wc', async (ctx: Context) => {
   if (ctx.chat?.type !== 'private') return;
 
@@ -341,45 +400,8 @@ verifyHandlers.command('wc', async (ctx: Context) => {
     return;
   }
 
-  await ctx.reply('🔄 Generating WalletConnect QR code...');
-
-  try {
-    // Disconnect any existing session and clear any pending rejection
-    await disconnectSession(userId);
-    checkAndClearRejection(userId);
-
-    const { uri, pairingTopic } = await createPairing(userId, state.groupId);
-
-    // Generate QR code
-    const qrBuffer = await generateQRBuffer(uri);
-
-    // Update state
-    state.step = 'wc_waiting';
-    state.wcPairingTopic = pairingTopic;
-
-    // Send QR code
-    await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
-      caption:
-        '📱 **Scan with your BCH wallet that supports WalletConnect**\n\n' +
-        'After connecting, I\'ll let you sign a message with the key that owns the NFT.',
-      parse_mode: 'Markdown',
-    });
-
-    // Also send the URI for copy-paste
-    await ctx.reply(
-      `Or copy this link to your wallet:\n\n\`${uri}\``,
-      { parse_mode: 'Markdown' }
-    );
-
-    // Wait for connection and handle verification
-    handleWcVerification(ctx, userId, state);
-
-  } catch (error) {
-    console.error('WalletConnect error:', error);
-    await ctx.reply(
-      'Failed to start WalletConnect. Please try manual verification by sending your BCH address.'
-    );
-  }
+  // Use the shared helper for starting WC flow
+  await startWalletConnectFlow(ctx, userId, state);
 });
 
 // /sign - Resend signature request (after rejection)

@@ -1,7 +1,2 @@
 = BUGS/PROBLEMS/FEATURE REQUESTS
 
- * maybe we can use the /wc flow as default and start it right away, offering manual address signing only as a fallback? Consider upsides/downsides
-
-= PENDING TEST
-
-(items awaiting manual testing before considered complete)
