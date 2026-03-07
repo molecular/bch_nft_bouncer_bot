@@ -35,7 +35,7 @@ Just add it to your group and configure your NFT categories.
 | `/add_condition balance <cat\|BCH> <amount> [label]` | Add token or BCH balance requirement |
 | `/list_conditions` | List all access conditions with IDs |
 | `/remove_condition <id>` | Remove a condition by ID |
-| `/status` | Show group configuration and bot permissions |
+| `/groupinfo` | Show group configuration and bot permissions |
 | `/scan` | Re-check all verified members |
 | `/adminhelp` | Show admin command help |
 
@@ -96,6 +96,7 @@ Access rules determine who can join your group:
 | `/verify` | Start or continue verification |
 | `/wc` | Connect wallet via WalletConnect QR code |
 | `/sign` | Resend signature request (after rejection) |
+| `/status` | Check your condition fulfillment status |
 | `/list_verifications` | Show your verified addresses |
 | `/unverify <id>` | Remove a verified address |
 | `/cancel` | Cancel current verification |
