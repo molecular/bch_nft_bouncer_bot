@@ -264,6 +264,7 @@ Support gating by asset balances and NFT commitment ranges.
 - [x] `/add_condition nft <cat> [label] [start] [end]` command
 - [x] `/add_condition balance <amount> <BCH|cat>` command
 - [x] `/remove_condition` accepts ID or name matching
+- [x] Aggregate balances across multiple verified addresses (not per-address check)
 
 ### Phase 12 (Future): Cross-Group Verification Reuse
 When a user joins a new group, automatically check if they have verified addresses elsewhere that qualify for access.

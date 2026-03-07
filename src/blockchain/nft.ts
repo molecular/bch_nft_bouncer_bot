@@ -273,55 +273,64 @@ export async function checkAccessRules(
 
 /**
  * Check access rules against multiple addresses (combines results)
- * - NFT rules: OR logic across all addresses
- * - Balance rules: OR logic across all addresses
+ * - NFT rules: OR logic across all addresses (any address having the NFT counts)
+ * - Balance rules: AGGREGATE across all addresses (sum balances, then check threshold)
  * - Between types: AND logic
  */
 export async function checkAccessRulesMultiAddress(
   addresses: string[],
   rules: AccessRule[]
 ): Promise<AccessRulesCheckResult> {
+  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  const balanceRules = rules.filter(r => r.rule_type === 'balance');
+
   if (addresses.length === 0) {
     return {
       satisfied: false,
-      nftSatisfied: rules.filter(r => r.rule_type === 'nft').length === 0,
-      balanceSatisfied: rules.filter(r => r.rule_type === 'balance').length === 0,
+      nftSatisfied: nftRules.length === 0,
+      balanceSatisfied: balanceRules.length === 0,
       nftResults: [],
       balanceResults: [],
     };
   }
 
-  // Check each address
-  const results = await Promise.all(addresses.map(addr => checkAccessRules(addr, rules)));
+  // Get balance info for all addresses
+  const addressInfos = await Promise.all(addresses.map(addr => getAddressBalanceInfo(addr)));
 
-  // Combine NFT results - take first satisfied result for each rule, or any result if none satisfied
-  const nftRules = rules.filter(r => r.rule_type === 'nft');
+  // Aggregate balances across all addresses
+  let totalBch = 0n;
+  const totalFungibles = new Map<string, bigint>();
+  const allNfts: OwnedNft[] = [];
+
+  for (const info of addressInfos) {
+    totalBch += info.bchSatoshis;
+    for (const [category, amount] of info.fungibleTokens) {
+      totalFungibles.set(category, (totalFungibles.get(category) || 0n) + amount);
+    }
+    allNfts.push(...info.nfts);
+  }
+
+  // Check NFT rules (OR logic - any address having the NFT counts)
   const nftResults: NftRuleResult[] = nftRules.map(rule => {
-    // Find first address that satisfies this rule
-    for (const result of results) {
-      const ruleResult = result.nftResults.find(r => r.rule.id === rule.id);
-      if (ruleResult?.satisfied) return ruleResult;
-    }
-    // Not satisfied by any address - return first result
-    for (const result of results) {
-      const ruleResult = result.nftResults.find(r => r.rule.id === rule.id);
-      if (ruleResult) return ruleResult;
-    }
-    return { satisfied: false, rule };
+    const match = allNfts.find(nft =>
+      nft.category.toLowerCase() === rule.category?.toLowerCase() &&
+      isCommitmentInRange(nft.commitment, rule.start_commitment, rule.end_commitment)
+    );
+    return { satisfied: !!match, rule, matchingNft: match };
   });
 
-  // Combine balance results similarly
-  const balanceRules = rules.filter(r => r.rule_type === 'balance');
+  // Check balance rules against AGGREGATED balances
   const balanceResults: BalanceRuleResult[] = balanceRules.map(rule => {
-    for (const result of results) {
-      const ruleResult = result.balanceResults.find(r => r.rule.id === rule.id);
-      if (ruleResult?.satisfied) return ruleResult;
+    const minAmount = BigInt(rule.min_amount || '0');
+    let actualAmount: bigint;
+
+    if (rule.category?.toUpperCase() === 'BCH') {
+      actualAmount = totalBch;
+    } else {
+      actualAmount = totalFungibles.get(rule.category?.toLowerCase() || '') || 0n;
     }
-    for (const result of results) {
-      const ruleResult = result.balanceResults.find(r => r.rule.id === rule.id);
-      if (ruleResult) return ruleResult;
-    }
-    return { satisfied: false, rule };
+
+    return { satisfied: actualAmount >= minAmount, rule, actualAmount };
   });
 
   const nftSatisfied = nftRules.length === 0 || nftResults.some(r => r.satisfied);
