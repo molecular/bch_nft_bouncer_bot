@@ -111,29 +111,30 @@ export async function createPairing(
   // Extract pairing topic from URI
   const pairingTopic = uri.split('@')[0].split(':')[1];
 
-  // Store pending pairing
-  const pairingPromise = new Promise<any>((resolve, reject) => {
-    pendingPairings.set(pairingTopic, {
-      telegramUserId,
-      groupId,
-      resolve,
-      reject,
-    });
+  // Track if we've already handled expiry (to avoid double-firing callback)
+  let expiryHandled = false;
 
-    // Timeout after configured duration
-    const timeoutMs = options?.timeoutMs ?? PAIRING_TIMEOUT_MS;
-    setTimeout(() => {
-      if (pendingPairings.has(pairingTopic)) {
-        pendingPairings.delete(pairingTopic);
-        reject(new Error('Pairing timeout'));
-        // Call timeout callback if provided
-        options?.onTimeout?.();
-      }
-    }, timeoutMs);
+  // Store pending pairing with placeholder resolve/reject (used by waitForPairing)
+  pendingPairings.set(pairingTopic, {
+    telegramUserId,
+    groupId,
+    resolve: () => {},
+    reject: () => {},
   });
+
+  // Set up our own timeout to call the callback
+  const timeoutMs = options?.timeoutMs ?? PAIRING_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => {
+    if (pendingPairings.has(pairingTopic) && !expiryHandled) {
+      expiryHandled = true;
+      pendingPairings.delete(pairingTopic);
+      options?.onTimeout?.();
+    }
+  }, timeoutMs);
 
   // Handle approval asynchronously
   approval().then((session: any) => {
+    clearTimeout(timeoutId);
     const pending = pendingPairings.get(pairingTopic);
     if (pending) {
       pendingPairings.delete(pairingTopic);
@@ -148,14 +149,23 @@ export async function createPairing(
       pending.resolve(session);
     }
   }).catch((error: any) => {
+    clearTimeout(timeoutId);
     const pending = pendingPairings.get(pairingTopic);
     if (pending) {
       pendingPairings.delete(pairingTopic);
-      // Store rejection so polling can detect it
-      rejectedPairings.set(pending.telegramUserId, {
-        message: error?.message || 'Connection rejected',
-        code: error?.code || 0,
-      });
+
+      // Check if this is a timeout/expiry from WalletConnect
+      const isExpiry = error?.message?.includes('expired') || error?.message?.includes('timeout');
+      if (isExpiry && !expiryHandled) {
+        expiryHandled = true;
+        options?.onTimeout?.();
+      } else if (!isExpiry) {
+        // Store rejection so polling can detect it (user rejected in wallet)
+        rejectedPairings.set(pending.telegramUserId, {
+          message: error?.message || 'Connection rejected',
+          code: error?.code || 0,
+        });
+      }
     }
   });
 
