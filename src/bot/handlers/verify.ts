@@ -766,13 +766,8 @@ async function handleWcVerification(
 
     if (attempts >= maxAttempts) {
       // Keep state so user can retry with /wc
+      // Note: onTimeout callback in session.ts handles the user notification
       state.step = 'address';
-      await ctx.reply(
-        '⏰ WalletConnect connection timed out (no wallet connected).\n\n' +
-        'To try again:\n' +
-        '• Send /wc for a new QR code\n' +
-        '• Or send your BCH address for manual verification'
-      );
       return;
     }
 
