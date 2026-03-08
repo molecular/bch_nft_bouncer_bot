@@ -16,8 +16,7 @@
     "dotenv": "^16.4.5",
     "grammy": "^1.21.1",
     "mainnet-js": "^3.0.0",
-    "qrcode": "^1.5.3",
-    "sharp": "^0.34.5"
+    "qrcode": "^1.5.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.8",

@@ -24,7 +24,7 @@ import {
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
-import { sendVerifiedMessage, type MatchingNftInfo } from '../utils/verification.js';
+import { sendVerifiedMessage } from '../utils/verification.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
@@ -194,7 +194,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
       deletePendingKick(userId, groupId);
       verificationState.delete(userId);
       await ctx.reply(msg, { parse_mode: 'Markdown' });
-      await addUserToGroup(ctx, userId, groupId, extractMatchingNft(result));
+      await addUserToGroup(ctx, userId, groupId);
       return;
     }
 
@@ -467,7 +467,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       await ctx.reply(msg, { parse_mode: 'Markdown' });
 
       // Try to add user back to group
-      await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
+      await addUserToGroup(ctx, userId, state.groupId);
     } else {
       // Show progress
       let msg = '✅ **Address verified!**\n\n';
@@ -575,7 +575,7 @@ async function handleWcVerification(
               await formatRequirementsMessage(rules, result),
               { parse_mode: 'Markdown' }
             );
-            await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
+            await addUserToGroup(ctx, userId, state.groupId);
             verificationState.delete(userId);
           } else {
             // Still pending - show progress
@@ -644,7 +644,7 @@ async function handleWcVerification(
               { parse_mode: 'Markdown' }
             );
 
-            await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result2));
+            await addUserToGroup(ctx, userId, state.groupId);
             verificationState.delete(userId);
           } else {
             // Show progress
@@ -811,7 +811,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
           await formatRequirementsMessage(rules, result),
           { parse_mode: 'Markdown' }
         );
-        await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
+        await addUserToGroup(ctx, userId, state.groupId);
         verificationState.delete(userId);
       } else {
         // Still pending - show progress
@@ -926,7 +926,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
         { parse_mode: 'Markdown' }
       );
 
-      await addUserToGroup(ctx, userId, state.groupId, extractMatchingNft(result));
+      await addUserToGroup(ctx, userId, state.groupId);
       verificationState.delete(userId);
     } else {
       // Show progress
@@ -1208,32 +1208,10 @@ verifyHandlers.command('cancel', async (ctx: Context) => {
   }
 });
 
-// MatchingNftInfo imported from ../utils/verification.js
-// Extended locally to include label for internal use
-interface MatchingNftInfoWithLabel extends MatchingNftInfo {
-  label?: string;
-}
-
-// Helper to extract matching NFT info from checkAccessRules result
-function extractMatchingNft(
-  result: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
-): MatchingNftInfoWithLabel | undefined {
-  const satisfiedNft = result.nftResults.find(r => r.satisfied && r.matchingNft);
-  if (satisfiedNft?.matchingNft) {
-    return {
-      category: satisfiedNft.matchingNft.category,
-      commitment: satisfiedNft.matchingNft.commitment || undefined,
-      label: satisfiedNft.rule.label || undefined,
-    };
-  }
-  return undefined;
-}
-
 async function addUserToGroup(
   ctx: Context,
   userId: number,
-  groupId: number,
-  matchingNft?: MatchingNftInfoWithLabel
+  groupId: number
 ): Promise<void> {
   console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
   try {
@@ -1252,13 +1230,13 @@ async function addUserToGroup(
       }
     }
 
-    // Send "verified" message to the group (with NFT image if available)
+    // Send "verified" message to the group
     const username = ctx.from?.username
       ? `@${ctx.from.username}`
       : ctx.from?.first_name || 'User';
 
     try {
-      await sendVerifiedMessage(ctx.api, groupId, username, matchingNft);
+      await sendVerifiedMessage(ctx.api, groupId, username);
     } catch {
       // May fail if bot can't send to the group
     }

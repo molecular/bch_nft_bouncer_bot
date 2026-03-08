@@ -68,8 +68,6 @@ export function initializeDatabase(): void {
       name TEXT,
       symbol TEXT,
       description TEXT,
-      icon_uri TEXT,
-      image_uri TEXT,
       decimals INTEGER,
       fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -157,6 +155,30 @@ export function initializeDatabase(): void {
       SELECT group_id, 'nft', category FROM group_nft_categories
     `);
     console.log(`Migrated ${nftCategoriesCount.count} NFT categories to access rules`);
+  }
+
+  // Migration: Drop icon_uri and image_uri columns from token_metadata (removed for privacy)
+  const tokenMetadataColumns = db.prepare("PRAGMA table_info(token_metadata)").all() as { name: string }[];
+  if (tokenMetadataColumns.some(col => col.name === 'icon_uri')) {
+    console.log('Removing icon_uri and image_uri columns from token_metadata...');
+    // SQLite doesn't support DROP COLUMN directly in older versions, so recreate the table
+    db.exec(`
+      CREATE TABLE token_metadata_new (
+        category TEXT PRIMARY KEY,
+        name TEXT,
+        symbol TEXT,
+        description TEXT,
+        decimals INTEGER,
+        fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT INTO token_metadata_new (category, name, symbol, description, decimals, fetched_at)
+        SELECT category, name, symbol, description, decimals, fetched_at FROM token_metadata;
+
+      DROP TABLE token_metadata;
+      ALTER TABLE token_metadata_new RENAME TO token_metadata;
+    `);
+    console.log('Removed icon_uri and image_uri columns from token_metadata');
   }
 
   console.log('Database initialized');

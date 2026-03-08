@@ -330,22 +330,18 @@ export function upsertTokenMetadata(
   name: string | null,
   symbol: string | null,
   description: string | null,
-  iconUri: string | null,
-  imageUri: string | null,
   decimals: number | null
 ): void {
   db.prepare(`
-    INSERT INTO token_metadata (category, name, symbol, description, icon_uri, image_uri, decimals, fetched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO token_metadata (category, name, symbol, description, decimals, fetched_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(category) DO UPDATE SET
       name = excluded.name,
       symbol = excluded.symbol,
       description = excluded.description,
-      icon_uri = excluded.icon_uri,
-      image_uri = excluded.image_uri,
       decimals = excluded.decimals,
       fetched_at = excluded.fetched_at
-  `).run(category, name, symbol, description, iconUri, imageUri, decimals);
+  `).run(category, name, symbol, description, decimals);
 }
 
 export function isTokenMetadataStale(category: string, maxAgeHours: number = 24): boolean {

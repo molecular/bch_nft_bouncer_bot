@@ -23,17 +23,9 @@ interface PaytacaTokenResponse {
     symbol?: string;
     decimals?: number;
   };
-  // URIs are nested under 'uris' key
-  uris?: {
-    icon?: string;
-    image?: string;
-    web?: string;
-  };
   // Legacy flat fields (for backwards compatibility)
   symbol?: string;
   decimals?: number;
-  icon?: string;
-  image?: string;
 }
 
 /**
@@ -59,7 +51,7 @@ export async function fetchTokenMetadata(
     if (!response.ok) {
       if (response.status === 404) {
         // Token not in registry - cache as "no metadata" to avoid repeated lookups
-        upsertTokenMetadata(category, null, null, null, null, null, null);
+        upsertTokenMetadata(category, null, null, null, null);
         return null;
       }
       console.error(`BCMR API error: ${response.status} ${response.statusText}`);
@@ -71,8 +63,6 @@ export async function fetchTokenMetadata(
     // Extract fields with fallback to nested and flat paths
     const symbol = data.token?.symbol || data.symbol || null;
     const decimals = data.token?.decimals ?? data.decimals ?? null;
-    const iconUri = data.uris?.icon || data.icon || null;
-    const imageUri = data.uris?.image || data.image || null;
 
     // Store in cache
     upsertTokenMetadata(
@@ -80,8 +70,6 @@ export async function fetchTokenMetadata(
       data.name || null,
       symbol,
       data.description || null,
-      iconUri,
-      imageUri,
       decimals
     );
 
@@ -157,29 +145,3 @@ export async function getFormattedNftDisplay(
   return formatNftDisplay(category, commitment, metadata);
 }
 
-/**
- * Resolve image URI to an HTTP(S) URL.
- * Handles IPFS URIs by converting to gateway URL.
- */
-export function resolveImageUri(uri: string | null | undefined): string | null {
-  if (!uri) return null;
-
-  // Already HTTP(S)
-  if (uri.startsWith('http://') || uri.startsWith('https://')) {
-    return uri;
-  }
-
-  // IPFS URI -> gateway URL
-  if (uri.startsWith('ipfs://')) {
-    const cid = uri.replace('ipfs://', '');
-    return `https://ipfs.io/ipfs/${cid}`;
-  }
-
-  // Raw CID (no protocol) - check for common IPFS CID formats
-  if (uri.match(/^Qm[a-zA-Z0-9]{44}/) || uri.match(/^bafy/)) {
-    return `https://ipfs.io/ipfs/${uri}`;
-  }
-
-  // Return as-is, let caller decide what to do
-  return uri;
-}

@@ -109,8 +109,6 @@ CREATE TABLE token_metadata (
   name TEXT,
   symbol TEXT,
   description TEXT,
-  icon_uri TEXT,
-  image_uri TEXT,
   decimals INTEGER,
   fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -228,17 +226,8 @@ nft_entry_bot/
 - [x] Configurable timeout via env vars (PENDING_VERIFICATION_TIMEOUT_MINUTES, PENDING_VERIFICATION_WARN_MINUTES)
 - [x] Warn user via DM before kicking (at 20 min by default)
 
-### Phase 10: NFT Image in Verified Announcements
-- [x] Fix BCMR parsing to extract `uris.icon` and `token.symbol`
-- [x] Resolve IPFS URIs to gateway URLs
-- [x] Image fetching and resizing module (sharp)
-- [x] Show NFT info in "user verified" group announcements
-- [x] Attach image to "user verified" announcements with sendPhoto
-- [x] Graceful fallback to text-only if no image
-
-### Phase 10b (Future): Image Caching
-- [ ] Cache resized images in SQLite to avoid repeated fetches
-- [ ] Periodic refresh for stale images
+### Phase 10: NFT Image in Verified Announcements (Removed)
+Removed for privacy - group verified announcements now show only "✅ @user verified!" without NFT details, images, or commitment IDs. Token name lookups retained for DM messages and /status command.
 
 ### Phase 11: Balance Threshold & Commitment Range Gating
 Support gating by asset balances and NFT commitment ranges.
@@ -297,18 +286,6 @@ Support checking coin lockups in HODL plugin or VOX vault as access conditions.
 - [ ] Add 'lockup' rule type to group_access_rules
 - [ ] Implement lockup balance checking
 
-### Phase 14 (Future): Privacy Mode
-User-selectable privacy mode that hides which specific NFT was used for verification.
-- [ ] Add privacy preference to verifications table
-- [ ] Offer privacy toggle during verification flow
-- [ ] "✅ @user verified!" only (no NFT details) when enabled
-- [ ] Group admin option to require/disable privacy mode
-
-### Phase 15 (Future): Optional NFT Image/Commitment Display
-Admin toggle for showing NFT images and/or commitment IDs in verification announcements.
-- [ ] Add display settings to groups table (show_nft_image, show_commitment)
-- [ ] Admin commands to configure display options
-- [ ] Respect settings in sendVerifiedMessage()
 
 ## Key Dependencies
 ```json

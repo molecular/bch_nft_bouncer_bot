@@ -264,19 +264,7 @@ async function grantAccess(
         // Ignore errors getting user info
       }
 
-      // Extract matching NFT info if available
-      let matchingNft: { category: string; commitment?: string } | undefined;
-      if (result) {
-        const satisfiedNft = result.nftResults.find(r => r.satisfied && r.matchingNft);
-        if (satisfiedNft?.matchingNft) {
-          matchingNft = {
-            category: satisfiedNft.matchingNft.category,
-            commitment: satisfiedNft.matchingNft.commitment || undefined,
-          };
-        }
-      }
-
-      await sendVerifiedMessage(botInstance.api, verification.group_id, username, matchingNft);
+      await sendVerifiedMessage(botInstance.api, verification.group_id, username);
     } catch {
       // May fail if bot can't send to the group
     }
