@@ -334,10 +334,35 @@ async function startWalletConnectFlow(
   await disconnectSession(userId);
   checkAndClearRejection(userId);
 
-  try {
-    await ctx.reply('🔗 Connecting via WalletConnect...');
+  const chatId = ctx.chat!.id;
+  const messagesToDelete: number[] = [];
 
-    const { uri, pairingTopic } = await createPairing(userId, state.groupId);
+  try {
+    const connectingMsg = await ctx.reply('🔗 Connecting via WalletConnect...');
+    messagesToDelete.push(connectingMsg.message_id);
+
+    // Create pairing with timeout callback to clean up QR messages
+    const { uri, pairingTopic } = await createPairing(userId, state.groupId, {
+      onTimeout: async () => {
+        // Delete QR-related messages
+        for (const msgId of messagesToDelete) {
+          try {
+            await ctx.api.deleteMessage(chatId, msgId);
+          } catch {
+            // Message may already be deleted or too old
+          }
+        }
+        // Notify user
+        try {
+          await ctx.api.sendMessage(
+            chatId,
+            '⏱️ QR code expired. Send /wc for a new one, or send your BCH address directly.'
+          );
+        } catch {
+          // User may have blocked the bot
+        }
+      },
+    });
 
     // Generate QR code
     const qrBuffer = await generateQRBuffer(uri);
@@ -347,23 +372,26 @@ async function startWalletConnectFlow(
     state.wcPairingTopic = pairingTopic;
 
     // Send QR code
-    await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
+    const qrMsg = await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
       caption:
         '📱 **Scan with your BCH wallet** (Paytaca, Cashonize, ...)\n\n' +
         'Or copy this link:',
       parse_mode: 'Markdown',
     });
+    messagesToDelete.push(qrMsg.message_id);
 
     // Send URI in monospace for easy copying
-    await ctx.reply(`\`${uri}\``, { parse_mode: 'Markdown' });
+    const uriMsg = await ctx.reply(`\`${uri}\``, { parse_mode: 'Markdown' });
+    messagesToDelete.push(uriMsg.message_id);
 
     // Fallback option - prominent message for users without WC wallets
-    await ctx.reply(
+    const fallbackMsg = await ctx.reply(
       '💡 **Not using WalletConnect?**\n' +
       'Send your BCH address for manual verification:\n' +
       'Example: `bitcoincash:qr...`',
       { parse_mode: 'Markdown' }
     );
+    messagesToDelete.push(fallbackMsg.message_id);
 
     // Start polling for wallet connection
     handleWcVerification(ctx, userId, state);

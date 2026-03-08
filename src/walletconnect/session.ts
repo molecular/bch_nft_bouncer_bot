@@ -74,12 +74,22 @@ export interface PairingResult {
   pairingTopic: string;
 }
 
+export interface PairingOptions {
+  /** Called when the pairing times out (user ignored QR code) */
+  onTimeout?: () => void;
+  /** Timeout duration in milliseconds (default: 5 minutes) */
+  timeoutMs?: number;
+}
+
+const PAIRING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Create a new pairing for a user to connect their wallet
  */
 export async function createPairing(
   telegramUserId: number,
-  groupId: number
+  groupId: number,
+  options?: PairingOptions
 ): Promise<PairingResult> {
   const client = await getSignClient();
 
@@ -110,13 +120,16 @@ export async function createPairing(
       reject,
     });
 
-    // Timeout after 5 minutes
+    // Timeout after configured duration
+    const timeoutMs = options?.timeoutMs ?? PAIRING_TIMEOUT_MS;
     setTimeout(() => {
       if (pendingPairings.has(pairingTopic)) {
         pendingPairings.delete(pairingTopic);
         reject(new Error('Pairing timeout'));
+        // Call timeout callback if provided
+        options?.onTimeout?.();
       }
-    }, 5 * 60 * 1000);
+    }, timeoutMs);
   });
 
   // Handle approval asynchronously
