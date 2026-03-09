@@ -13,7 +13,6 @@ export interface Verification {
   id: number;
   telegram_user_id: number;
   telegram_username: string | null;
-  group_id: number;
   bch_address: string;
   verified_at: string;
 }
@@ -28,13 +27,16 @@ export interface Challenge {
   expires_at: string | null;
 }
 
-export interface PendingKick {
-  id: number;
+export type MembershipStatus = 'restricted' | 'authorized';
+
+export interface GroupMembership {
   telegram_user_id: number;
   group_id: number;
-  kicked_at: string;
+  status: MembershipStatus;
+  joined_at: string;
+  warning_sent: boolean;
+  kick_at: string | null;
   prompt_message_id: number | null;
-  warned_at: string | null;
 }
 
 export interface TokenMetadata {

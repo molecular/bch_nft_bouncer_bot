@@ -1,16 +1,17 @@
 import { Context, Composer } from 'grammy';
 import {
   getGroup,
-  isGroupConfigured,
-  getVerification,
-  getVerificationForGroup,
-  addPendingKick,
-  getPendingKick,
+  getVerificationsForUser,
+  addGroupMembership,
+  getGroupMembership,
+  setMembershipStatus,
   getNftCategories,
-  updatePendingKickMessageId,
+  updateMembershipMessageId,
+  getAccessRules,
 } from '../../storage/queries.js';
 import { restrictUser, unrestrictUser, unrestrictIfNeeded } from '../utils/permissions.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
+import { checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 
 export const joinHandlers = new Composer();
 
@@ -51,42 +52,61 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return;
   }
 
-  // Check if this group is configured
+  // Check if this group is managed by the bot
   const group = getGroup(chatId);
-  if (!group || !isGroupConfigured(chatId)) {
-    return; // Not a gated group
+  if (!group) {
+    return; // Bot not managing this group
   }
 
-  // Check if user has a verification for this group
-  const verification = getVerificationForGroup(userId, chatId);
-  const pendingKick = getPendingKick(userId, chatId);
+  // Check existing membership and verifications
+  const membership = getGroupMembership(userId, chatId);
+  const verifications = getVerificationsForUser(userId);
+  const userAddresses = [...new Set(verifications.map(v => v.bch_address))];
+  const rules = getAccessRules(chatId);
 
-  if (verification && !pendingKick) {
-    // User is verified AND not in pending_kicks = they qualify
-    console.log(`User ${userId} verified and qualifies for group ${chatId}, ensuring unrestricted`);
+  if (membership?.status === 'authorized') {
+    // User is already authorized - ensure unrestricted
+    console.log(`User ${userId} authorized for group ${chatId}, ensuring unrestricted`);
     try {
       await unrestrictUser(ctx.api, chatId, userId);
       console.log(`User ${userId} unrestricted on rejoin`);
     } catch (error: any) {
-      console.error(`Failed to unrestrict verified user ${userId}:`, error.message);
+      console.error(`Failed to unrestrict authorized user ${userId}:`, error.message);
     }
     return;
   }
 
-  if (verification && pendingKick) {
-    // User has verified address but doesn't qualify yet - stay restricted
-    console.log(`User ${userId} has verification but doesn't qualify for group ${chatId}, staying restricted`);
+  // If no rules configured, everyone qualifies
+  if (rules.length === 0) {
+    console.log(`User ${userId} joins group ${chatId} with no rules - auto-authorized`);
+    addGroupMembership(userId, chatId, 'authorized');
     return;
   }
 
-  // Check if we've already prompted this user (avoid duplicate prompts when restriction triggers chat_member event)
-  if (pendingKick) {
-    console.log(`User ${userId} already in pending_kicks, skipping prompt`);
+  // Check if user has verifications and qualifies
+  if (verifications.length > 0) {
+    const result = await checkAccessRulesMultiAddress(userAddresses, rules);
+    if (result.satisfied) {
+      // User qualifies - add as authorized and unrestrict
+      console.log(`User ${userId} verifications qualify for group ${chatId}, granting access`);
+      addGroupMembership(userId, chatId, 'authorized');
+      try {
+        await unrestrictUser(ctx.api, chatId, userId);
+      } catch (error: any) {
+        console.error(`Failed to unrestrict qualifying user ${userId}:`, error.message);
+      }
+      return;
+    }
+  }
+
+  // Check if we've already tracked this user (avoid duplicate prompts)
+  if (membership) {
+    console.log(`User ${userId} already has membership record (status: ${membership.status}), skipping prompt`);
     return;
   }
 
-  // New unverified user - restrict until verified
-  console.log(`New unverified user ${userId} joined group ${chatId}, restricting...`);
+  // New user who doesn't qualify - restrict until verified
+  console.log(`New user ${userId} joined group ${chatId}, restricting...`);
 
   const username = new_chat_member.user.username
     ? `@${new_chat_member.user.username}`
@@ -99,8 +119,8 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     // Restrict user - they can read but not post until verified
     await restrictUser(ctx.api, chatId, userId);
 
-    // Track pending verification
-    addPendingKick(userId, chatId);
+    // Track membership as restricted
+    addGroupMembership(userId, chatId, 'restricted');
 
     // Fetch categories and their metadata for display
     const categories = getNftCategories(chatId);
@@ -114,7 +134,7 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
       `Requirements: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
-    updatePendingKickMessageId(userId, chatId, promptMessage.message_id);
+    updateMembershipMessageId(userId, chatId, promptMessage.message_id);
 
     // Also try to DM (no Markdown - bot username has underscores that break links)
     try {
@@ -160,10 +180,10 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     return next();
   }
 
-  // Check if this group is configured for wallet verification
+  // Check if this group is managed by the bot
   const group = getGroup(chatId);
-  if (!group || !isGroupConfigured(chatId)) {
-    return next(); // Not a gated group
+  if (!group) {
+    return next(); // Bot not managing this group
   }
 
   // Check if user is admin/creator (they're exempt)
@@ -176,26 +196,54 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     // If we can't check membership, continue with verification check
   }
 
-  // Check if user qualifies (has verification AND not in pending_kicks)
-  const verification = getVerificationForGroup(userId, chatId);
-  const pendingKick = getPendingKick(userId, chatId);
+  // Check existing membership and verifications
+  const membership = getGroupMembership(userId, chatId);
+  const verifications = getVerificationsForUser(userId);
+  const userAddresses = [...new Set(verifications.map(v => v.bch_address))];
+  const rules = getAccessRules(chatId);
 
-  if (verification && !pendingKick) {
-    // User is verified and qualifies - ensure unrestricted
+  // If user is authorized, allow message
+  if (membership?.status === 'authorized') {
+    // Ensure unrestricted (in case they got restricted externally)
     try {
       const wasRestricted = await unrestrictIfNeeded(ctx.api, chatId, userId);
       if (wasRestricted) {
-        console.log(`[join] Unrestricted verified user ${userId}`);
+        console.log(`[join] Unrestricted authorized user ${userId}`);
       }
     } catch (error: any) {
-      console.error(`[join] Error unrestricting verified user ${userId}:`, error.message);
+      console.error(`[join] Error unrestricting authorized user ${userId}:`, error.message);
     }
-    return next(); // User qualifies, allow message
+    return next();
   }
 
-  // Check if user has verification but doesn't qualify (in pending_kicks)
-  if (verification && pendingKick) {
-    // User has verified address but doesn't meet conditions - just delete message quietly
+  // If no rules configured, everyone qualifies
+  if (rules.length === 0) {
+    if (!membership) {
+      console.log(`[join] User ${userId} in group ${chatId} with no rules - auto-authorized`);
+      addGroupMembership(userId, chatId, 'authorized');
+    }
+    return next();
+  }
+
+  // Check if user has no membership record but has verifications
+  if (!membership && verifications.length > 0) {
+    const result = await checkAccessRulesMultiAddress(userAddresses, rules);
+    if (result.satisfied) {
+      // User qualifies - add as authorized and allow
+      console.log(`[join] User ${userId} qualifies via existing verifications`);
+      addGroupMembership(userId, chatId, 'authorized');
+      try {
+        await unrestrictIfNeeded(ctx.api, chatId, userId);
+      } catch (error: any) {
+        console.error(`[join] Error unrestricting user ${userId}:`, error.message);
+      }
+      return next();
+    }
+  }
+
+  // User is restricted or doesn't qualify
+  if (membership?.status === 'restricted') {
+    // User is restricted and knows it - just delete message quietly
     try {
       await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
     } catch {
@@ -204,21 +252,12 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     return; // Don't spam them - they already know
   }
 
-  // Unverified user posted - delete message and remind them
+  // First time seeing this user - they need verification
   console.log(`Unverified user ${userId} posted in gated group ${chatId}, deleting message`);
-
-  // Check if we already know about this user (they have a pending kick)
-  const existingPendingKick = getPendingKick(userId, chatId);
 
   try {
     // Delete the message
     await ctx.api.deleteMessage(chatId, ctx.message!.message_id);
-
-    // If we already have a pending kick, just delete - don't spam the group
-    if (existingPendingKick) {
-      console.log(`[join] User ${userId} already has pending kick, skipping group message`);
-      return;
-    }
 
     const username = ctx.from?.username
       ? `@${ctx.from.username}`
@@ -230,8 +269,8 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     // Restrict user (in case they weren't already)
     await restrictUser(ctx.api, chatId, userId);
 
-    // Track pending verification
-    addPendingKick(userId, chatId);
+    // Track membership as restricted
+    addGroupMembership(userId, chatId, 'restricted');
 
     // Fetch categories and their metadata for display
     const categories = getNftCategories(chatId);
@@ -245,7 +284,7 @@ joinHandlers.on('message', async (ctx: Context, next) => {
       `Requirements: ${categoryList}\n\n` +
       `Click to verify: ${deepLink}`
     );
-    updatePendingKickMessageId(userId, chatId, promptMessage.message_id);
+    updateMembershipMessageId(userId, chatId, promptMessage.message_id);
 
   } catch (error: any) {
     console.error(`Error handling unverified message from ${userId}:`, error.message);

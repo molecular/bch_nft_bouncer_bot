@@ -30,15 +30,14 @@ export function initializeDatabase(): void {
       PRIMARY KEY (group_id, category)
     );
 
-    -- Verified addresses: proves user owns address for a group
+    -- Verified addresses: proves user owns address (global, not per-group)
     CREATE TABLE IF NOT EXISTS verifications (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       telegram_user_id INTEGER NOT NULL,
-      group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
       bch_address TEXT NOT NULL,
       verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       telegram_username TEXT,
-      UNIQUE(telegram_user_id, bch_address, group_id)
+      UNIQUE(telegram_user_id, bch_address)
     );
 
     -- Pending verification challenges
@@ -52,14 +51,16 @@ export function initializeDatabase(): void {
       expires_at DATETIME
     );
 
-    -- Track users who were kicked and need verification
-    CREATE TABLE IF NOT EXISTS pending_kicks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Track group memberships and their access status
+    CREATE TABLE IF NOT EXISTS group_memberships (
       telegram_user_id INTEGER NOT NULL,
       group_id INTEGER NOT NULL,
-      kicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'restricted',  -- 'restricted' | 'authorized'
+      joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      warning_sent BOOLEAN DEFAULT 0,
+      kick_at DATETIME,
       prompt_message_id INTEGER,
-      UNIQUE(telegram_user_id, group_id)
+      PRIMARY KEY (telegram_user_id, group_id)
     );
 
     -- Token metadata cache (BCMR)
@@ -88,10 +89,10 @@ export function initializeDatabase(): void {
 
     -- Create indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_verifications_user ON verifications(telegram_user_id);
-    CREATE INDEX IF NOT EXISTS idx_verifications_group ON verifications(group_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_address ON verifications(bch_address);
     CREATE INDEX IF NOT EXISTS idx_challenges_user ON challenges(telegram_user_id);
-    CREATE INDEX IF NOT EXISTS idx_pending_kicks_user ON pending_kicks(telegram_user_id);
+    CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(telegram_user_id);
+    CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(group_id);
     CREATE INDEX IF NOT EXISTS idx_access_rules_group ON group_access_rules(group_id);
   `);
 
@@ -99,7 +100,7 @@ export function initializeDatabase(): void {
   // Verifications now just prove address ownership, conditions are checked dynamically
   const columns = db.prepare("PRAGMA table_info(verifications)").all() as { name: string }[];
   if (columns.some(col => col.name === 'nft_category') || columns.some(col => col.name === 'status')) {
-    console.log('Migrating verifications table to simplified schema...');
+    console.log('Migrating verifications table (removing nft_category/status)...');
     db.exec(`
       -- Create new simplified table (no status - access computed dynamically)
       CREATE TABLE verifications_new (
@@ -126,23 +127,78 @@ export function initializeDatabase(): void {
       CREATE INDEX idx_verifications_group ON verifications(group_id);
       CREATE INDEX idx_verifications_address ON verifications(bch_address);
     `);
-    console.log('Migrated verifications table to simplified schema');
+    console.log('Migrated verifications table (removed nft_category/status)');
   }
 
-  // Migration: Add prompt_message_id column to pending_kicks if it doesn't exist
-  const pendingKicksColumns = db.prepare("PRAGMA table_info(pending_kicks)").all() as { name: string }[];
-  if (!pendingKicksColumns.some(col => col.name === 'prompt_message_id')) {
-    console.log('Adding prompt_message_id column to pending_kicks...');
-    db.exec('ALTER TABLE pending_kicks ADD COLUMN prompt_message_id INTEGER');
-    console.log('Added prompt_message_id column to pending_kicks');
+  // Migration: Remove group_id from verifications table (make verifications global)
+  const verificationCols = db.prepare("PRAGMA table_info(verifications)").all() as { name: string }[];
+  if (verificationCols.some(col => col.name === 'group_id')) {
+    console.log('Migrating verifications table to global schema (removing group_id)...');
+    db.exec(`
+      CREATE TABLE verifications_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_user_id INTEGER NOT NULL,
+        bch_address TEXT NOT NULL,
+        verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        telegram_username TEXT,
+        UNIQUE(telegram_user_id, bch_address)
+      );
+
+      -- Copy data, deduplicating by user+address (keep earliest verified_at)
+      INSERT OR IGNORE INTO verifications_new
+        (telegram_user_id, bch_address, verified_at, telegram_username)
+      SELECT telegram_user_id, bch_address, MIN(verified_at), telegram_username
+      FROM verifications
+      GROUP BY telegram_user_id, bch_address;
+
+      DROP TABLE verifications;
+      ALTER TABLE verifications_new RENAME TO verifications;
+
+      -- Recreate indexes (no longer need group index)
+      CREATE INDEX idx_verifications_user ON verifications(telegram_user_id);
+      CREATE INDEX idx_verifications_address ON verifications(bch_address);
+    `);
+    console.log('Migrated verifications to global schema');
   }
 
-  // Migration: Add warned_at column to pending_kicks if it doesn't exist
-  const pendingKicksColumns2 = db.prepare("PRAGMA table_info(pending_kicks)").all() as { name: string }[];
-  if (!pendingKicksColumns2.some(col => col.name === 'warned_at')) {
-    console.log('Adding warned_at column to pending_kicks...');
-    db.exec('ALTER TABLE pending_kicks ADD COLUMN warned_at DATETIME');
-    console.log('Added warned_at column to pending_kicks');
+  // Migration: Rename pending_kicks to group_memberships with status column
+  const hasPendingKicks = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_kicks'"
+  ).get();
+  if (hasPendingKicks) {
+    console.log('Migrating pending_kicks to group_memberships...');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS group_memberships (
+        telegram_user_id INTEGER NOT NULL,
+        group_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'restricted',
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        warning_sent BOOLEAN DEFAULT 0,
+        kick_at DATETIME,
+        prompt_message_id INTEGER,
+        PRIMARY KEY (telegram_user_id, group_id)
+      );
+
+      -- Copy data from pending_kicks (all existing entries are 'restricted')
+      INSERT OR IGNORE INTO group_memberships
+        (telegram_user_id, group_id, status, joined_at, warning_sent, kick_at, prompt_message_id)
+      SELECT
+        telegram_user_id,
+        group_id,
+        'restricted',
+        kicked_at,
+        CASE WHEN warned_at IS NOT NULL THEN 1 ELSE 0 END,
+        NULL,
+        prompt_message_id
+      FROM pending_kicks;
+
+      DROP TABLE pending_kicks;
+
+      -- Create indexes
+      CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(telegram_user_id);
+      CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(group_id);
+    `);
+    console.log('Migrated pending_kicks to group_memberships');
   }
 
   // Migration: Copy data from group_nft_categories to group_access_rules if needed

@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { config } from '../config.js';
-import type { Group, Verification, Challenge, PendingKick, TokenMetadata, AccessRule, AccessRuleType } from './types.js';
+import type { Group, Verification, Challenge, GroupMembership, MembershipStatus, TokenMetadata, AccessRule, AccessRuleType } from './types.js';
 import crypto from 'crypto';
 
 // ============ Groups ============
@@ -114,42 +114,24 @@ export function isGroupConfigured(groupId: number): boolean {
 export function addVerification(
   telegramUserId: number,
   telegramUsername: string | null,
-  groupId: number,
   bchAddress: string
 ): void {
   db.prepare(`
-    INSERT INTO verifications (telegram_user_id, telegram_username, group_id, bch_address)
-    VALUES (?, ?, ?, ?)
-  `).run(telegramUserId, telegramUsername, groupId, bchAddress);
+    INSERT INTO verifications (telegram_user_id, telegram_username, bch_address)
+    VALUES (?, ?, ?)
+    ON CONFLICT(telegram_user_id, bch_address) DO UPDATE SET
+      telegram_username = excluded.telegram_username,
+      verified_at = CURRENT_TIMESTAMP
+  `).run(telegramUserId, telegramUsername, bchAddress);
 }
 
 export function getVerificationByAddress(
   telegramUserId: number,
-  groupId: number,
   bchAddress: string
 ): Verification | undefined {
   return db.prepare(`
-    SELECT * FROM verifications
-    WHERE telegram_user_id = ? AND group_id = ? AND bch_address = ?
-  `).get(telegramUserId, groupId, bchAddress) as Verification | undefined;
-}
-
-export function getVerification(
-  telegramUserId: number,
-  groupId: number
-): Verification | undefined {
-  return db.prepare(`
-    SELECT * FROM verifications WHERE telegram_user_id = ? AND group_id = ?
-  `).get(telegramUserId, groupId) as Verification | undefined;
-}
-
-export function getVerificationForGroup(
-  telegramUserId: number,
-  groupId: number
-): Verification | undefined {
-  return db.prepare(`
-    SELECT * FROM verifications WHERE telegram_user_id = ? AND group_id = ? LIMIT 1
-  `).get(telegramUserId, groupId) as Verification | undefined;
+    SELECT * FROM verifications WHERE telegram_user_id = ? AND bch_address = ?
+  `).get(telegramUserId, bchAddress) as Verification | undefined;
 }
 
 export function getVerificationsForUser(telegramUserId: number): Verification[] {
@@ -171,14 +153,9 @@ export function deleteVerification(id: number): void {
   db.prepare('DELETE FROM verifications WHERE id = ?').run(id);
 }
 
-export function deleteVerificationsByUser(telegramUserId: number, groupId?: number): void {
-  if (groupId !== undefined) {
-    db.prepare('DELETE FROM verifications WHERE telegram_user_id = ? AND group_id = ?')
-      .run(telegramUserId, groupId);
-  } else {
-    db.prepare('DELETE FROM verifications WHERE telegram_user_id = ?')
-      .run(telegramUserId);
-  }
+export function deleteVerificationsByUser(telegramUserId: number): void {
+  db.prepare('DELETE FROM verifications WHERE telegram_user_id = ?')
+    .run(telegramUserId);
 }
 
 // ============ Challenges ============
@@ -230,92 +207,121 @@ export function cleanupExpiredChallenges(): void {
   db.prepare("DELETE FROM challenges WHERE expires_at < datetime('now')").run();
 }
 
-// ============ Pending Kicks ============
+// ============ Group Memberships ============
 
-export function addPendingKick(telegramUserId: number, groupId: number): void {
+export function addGroupMembership(
+  telegramUserId: number,
+  groupId: number,
+  status: MembershipStatus = 'restricted'
+): void {
   db.prepare(`
-    INSERT OR REPLACE INTO pending_kicks (telegram_user_id, group_id)
-    VALUES (?, ?)
-  `).run(telegramUserId, groupId);
+    INSERT INTO group_memberships (telegram_user_id, group_id, status)
+    VALUES (?, ?, ?)
+    ON CONFLICT(telegram_user_id, group_id) DO UPDATE SET
+      status = excluded.status,
+      joined_at = CURRENT_TIMESTAMP
+  `).run(telegramUserId, groupId, status);
 }
 
-export function getPendingKick(telegramUserId: number, groupId: number): PendingKick | undefined {
+export function getGroupMembership(telegramUserId: number, groupId: number): GroupMembership | undefined {
   return db.prepare(`
-    SELECT * FROM pending_kicks WHERE telegram_user_id = ? AND group_id = ?
-  `).get(telegramUserId, groupId) as PendingKick | undefined;
+    SELECT * FROM group_memberships WHERE telegram_user_id = ? AND group_id = ?
+  `).get(telegramUserId, groupId) as GroupMembership | undefined;
 }
 
-export function getPendingKicksForUser(telegramUserId: number): PendingKick[] {
-  return db.prepare('SELECT * FROM pending_kicks WHERE telegram_user_id = ?')
-    .all(telegramUserId) as PendingKick[];
+export function getGroupMembershipsForUser(telegramUserId: number): GroupMembership[] {
+  return db.prepare('SELECT * FROM group_memberships WHERE telegram_user_id = ?')
+    .all(telegramUserId) as GroupMembership[];
 }
 
-export function deletePendingKick(telegramUserId: number, groupId: number): void {
-  db.prepare('DELETE FROM pending_kicks WHERE telegram_user_id = ? AND group_id = ?')
+export function getAllGroupMemberships(): GroupMembership[] {
+  return db.prepare('SELECT * FROM group_memberships')
+    .all() as GroupMembership[];
+}
+
+export function getRestrictedMembershipsForUser(telegramUserId: number): GroupMembership[] {
+  return db.prepare(`
+    SELECT * FROM group_memberships WHERE telegram_user_id = ? AND status = 'restricted'
+  `).all(telegramUserId) as GroupMembership[];
+}
+
+export function deleteGroupMembership(telegramUserId: number, groupId: number): void {
+  db.prepare('DELETE FROM group_memberships WHERE telegram_user_id = ? AND group_id = ?')
     .run(telegramUserId, groupId);
 }
 
-export function updatePendingKickMessageId(telegramUserId: number, groupId: number, messageId: number): void {
-  db.prepare('UPDATE pending_kicks SET prompt_message_id = ? WHERE telegram_user_id = ? AND group_id = ?')
+export function setMembershipStatus(
+  userId: number,
+  groupId: number,
+  status: MembershipStatus
+): void {
+  db.prepare(`
+    UPDATE group_memberships SET status = ? WHERE telegram_user_id = ? AND group_id = ?
+  `).run(status, userId, groupId);
+}
+
+export function updateMembershipMessageId(telegramUserId: number, groupId: number, messageId: number): void {
+  db.prepare('UPDATE group_memberships SET prompt_message_id = ? WHERE telegram_user_id = ? AND group_id = ?')
     .run(messageId, telegramUserId, groupId);
 }
 
-// Users past timeout threshold
-export function getExpiredPendingKicks(timeoutMinutes: number): (PendingKick & { group_name: string | null })[] {
+// Users past timeout threshold (restricted only)
+export function getExpiredMemberships(timeoutMinutes: number): (GroupMembership & { group_name: string | null })[] {
   const stmt = db.prepare(`
-    SELECT pk.*, g.name as group_name
-    FROM pending_kicks pk
-    JOIN groups g ON pk.group_id = g.id
-    WHERE datetime(pk.kicked_at, '+' || ? || ' minutes') < datetime('now')
+    SELECT gm.*, g.name as group_name
+    FROM group_memberships gm
+    JOIN groups g ON gm.group_id = g.id
+    WHERE gm.status = 'restricted'
+      AND datetime(gm.joined_at, '+' || ? || ' minutes') < datetime('now')
   `);
-  return stmt.all(timeoutMinutes) as (PendingKick & { group_name: string | null })[];
+  return stmt.all(timeoutMinutes) as (GroupMembership & { group_name: string | null })[];
 }
 
-// Users past warn threshold but not yet warned, and not yet expired
-export function getPendingKicksToWarn(warnMinutes: number, timeoutMinutes: number): (PendingKick & { group_name: string | null })[] {
+// Users past warn threshold but not yet warned, and not yet expired (restricted only)
+export function getMembershipsToWarn(warnMinutes: number, timeoutMinutes: number): (GroupMembership & { group_name: string | null })[] {
   const stmt = db.prepare(`
-    SELECT pk.*, g.name as group_name
-    FROM pending_kicks pk
-    JOIN groups g ON pk.group_id = g.id
-    WHERE datetime(pk.kicked_at, '+' || ? || ' minutes') < datetime('now')
-      AND datetime(pk.kicked_at, '+' || ? || ' minutes') >= datetime('now')
-      AND pk.warned_at IS NULL
+    SELECT gm.*, g.name as group_name
+    FROM group_memberships gm
+    JOIN groups g ON gm.group_id = g.id
+    WHERE gm.status = 'restricted'
+      AND datetime(gm.joined_at, '+' || ? || ' minutes') < datetime('now')
+      AND datetime(gm.joined_at, '+' || ? || ' minutes') >= datetime('now')
+      AND gm.warning_sent = 0
   `);
-  return stmt.all(warnMinutes, timeoutMinutes) as (PendingKick & { group_name: string | null })[];
+  return stmt.all(warnMinutes, timeoutMinutes) as (GroupMembership & { group_name: string | null })[];
 }
 
-export function markPendingKickWarned(telegramUserId: number, groupId: number): void {
+export function markMembershipWarned(telegramUserId: number, groupId: number): void {
   const stmt = db.prepare(`
-    UPDATE pending_kicks SET warned_at = datetime('now')
+    UPDATE group_memberships SET warning_sent = 1
     WHERE telegram_user_id = ? AND group_id = ?
   `);
   stmt.run(telegramUserId, groupId);
 }
 
+// Legacy aliases for backwards compatibility during migration
+export const addPendingKick = (userId: number, groupId: number) => addGroupMembership(userId, groupId, 'restricted');
+export const getPendingKick = getGroupMembership;
+export const getPendingKicksForUser = getRestrictedMembershipsForUser;
+export const deletePendingKick = deleteGroupMembership;
+export const updatePendingKickMessageId = updateMembershipMessageId;
+export const getExpiredPendingKicks = getExpiredMemberships;
+export const getPendingKicksToWarn = getMembershipsToWarn;
+export const markPendingKickWarned = markMembershipWarned;
+
 // ============ Monitoring Helpers ============
 
 export function getAllVerifiedAddresses(): string[] {
-  // Include both active and pending verifications - we monitor all addresses
+  // Include all verified addresses - we monitor all of them
   const rows = db.prepare('SELECT DISTINCT bch_address FROM verifications')
     .all() as { bch_address: string }[];
   return rows.map(r => r.bch_address);
 }
 
-export function getVerificationsForMonitoring(): Array<{
-  id: number;
-  telegram_user_id: number;
-  group_id: number;
-  bch_address: string;
-}> {
-  return db.prepare(`
-    SELECT id, telegram_user_id, group_id, bch_address
-    FROM verifications
-  `).all() as Array<{
-    id: number;
-    telegram_user_id: number;
-    group_id: number;
-    bch_address: string;
-  }>;
+export function getAllConfiguredGroupIds(): number[] {
+  const rows = db.prepare('SELECT DISTINCT group_id FROM group_access_rules')
+    .all() as { group_id: number }[];
+  return rows.map(r => r.group_id);
 }
 
 // ============ Token Metadata ============

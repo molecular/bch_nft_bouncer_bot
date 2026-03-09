@@ -1,12 +1,24 @@
 import { getProvider } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
 import { sendVerifiedMessage } from '../bot/utils/verification.js';
-import { getVerificationsForMonitoring, deleteVerification, getNftCategories, getGroup, getAllVerifiedAddresses, deletePendingKick, getAccessRules, getPendingKick, addPendingKick } from '../storage/queries.js';
+import {
+  getVerificationsForUser,
+  getVerificationsByAddress,
+  getNftCategories,
+  getGroup,
+  getAllVerifiedAddresses,
+  getAllGroupMemberships,
+  getGroupMembership,
+  getGroupMembershipsForUser,
+  setMembershipStatus,
+  deleteGroupMembership,
+  getAccessRules,
+} from '../storage/queries.js';
 import { unrestrictUser } from '../bot/utils/permissions.js';
 import { escapeMarkdown } from '../bot/utils/format.js';
 import { formatRequirementsMessage } from '../bot/handlers/verify.js';
 import type { Bot } from 'grammy';
-import type { AccessRule } from '../storage/types.js';
+import type { AccessRule, GroupMembership } from '../storage/types.js';
 
 // Track condition state per user-group to detect changes
 // Key: "userId:groupId", Value: serialized satisfied rule IDs
@@ -139,69 +151,62 @@ export function removeAddressFromMonitor(address: string): void {
  * Check all verifications for a specific address (triggered by subscription)
  */
 async function checkAddressVerifications(address: string): Promise<void> {
-  const verifications = getVerificationsForMonitoring().filter(
-    v => v.bch_address === address
-  );
+  // Get all users who have verified this address
+  const verifications = getVerificationsByAddress(address);
+  const userIds = [...new Set(verifications.map(v => v.telegram_user_id))];
 
-  console.log(`[subscription] Checking ${verifications.length} verifications for ${address}`);
+  console.log(`[subscription] Checking ${userIds.length} users for address ${address}`);
 
-  // Group by user+group to avoid duplicate checks
-  const userGroupMap = new Map<string, typeof verifications[0]>();
-  for (const v of verifications) {
-    const key = `${v.telegram_user_id}:${v.group_id}`;
-    if (!userGroupMap.has(key)) {
-      userGroupMap.set(key, v);
-    }
-  }
+  for (const userId of userIds) {
+    // Get all memberships for this user
+    const memberships = getGroupMembershipsForUser(userId);
+    // Get all user's verified addresses
+    const userVerifications = getVerificationsForUser(userId);
+    const userAddresses = [...new Set(userVerifications.map(v => v.bch_address))];
 
-  for (const [key, verification] of userGroupMap) {
-    try {
-      const rules = getAccessRules(verification.group_id);
+    for (const membership of memberships) {
+      const cacheKey = `${userId}:${membership.group_id}`;
 
-      // If no rules configured, skip
-      if (rules.length === 0) {
-        console.log(`[subscription] No rules for group ${verification.group_id}, skipping`);
-        continue;
+      try {
+        const rules = getAccessRules(membership.group_id);
+
+        // If no rules configured, skip
+        if (rules.length === 0) {
+          console.log(`[subscription] No rules for group ${membership.group_id}, skipping`);
+          continue;
+        }
+
+        // Check access rules against all user's addresses
+        const result = await checkAccessRulesMultiAddress(userAddresses, rules);
+
+        const isRestricted = membership.status === 'restricted';
+
+        console.log(`[subscription] User ${userId} group ${membership.group_id}: status=${membership.status}, satisfied=${result.satisfied}`);
+
+        // Check if condition state changed
+        const newStateKey = getConditionStateKey(result);
+        const oldStateKey = conditionStateCache.get(cacheKey);
+
+        if (result.satisfied && isRestricted) {
+          // Now qualifies - unrestrict
+          console.log(`[subscription] User ${userId} now qualifies - granting access!`);
+          conditionStateCache.set(cacheKey, newStateKey);
+          await notifyConditionProgress(membership, rules, result);
+          await grantAccess(membership, result);
+        } else if (!result.satisfied && !isRestricted) {
+          // No longer qualifies - restrict
+          console.log(`[subscription] User ${userId} no longer qualifies - restricting`);
+          conditionStateCache.set(cacheKey, newStateKey);
+          await revokeAccess(membership);
+        } else if (isRestricted && oldStateKey !== newStateKey) {
+          // Still restricted but state changed - notify progress
+          console.log(`[subscription] Condition state changed for user ${userId}`);
+          conditionStateCache.set(cacheKey, newStateKey);
+          await notifyConditionProgress(membership, rules, result);
+        }
+      } catch (error) {
+        console.error(`[subscription] Error checking user ${userId} group ${membership.group_id}:`, error);
       }
-
-      // Get all addresses for this user in this group
-      const userVerifications = getVerificationsForMonitoring().filter(
-        v => v.telegram_user_id === verification.telegram_user_id && v.group_id === verification.group_id
-      );
-      const userAddresses = [...new Set(userVerifications.map(v => v.bch_address))];
-
-      // Check access rules against all user's addresses
-      const result = await checkAccessRulesMultiAddress(userAddresses, rules);
-
-      // Check if user is currently restricted (has pending_kick)
-      const isRestricted = !!getPendingKick(verification.telegram_user_id, verification.group_id);
-
-      console.log(`[subscription] User ${verification.telegram_user_id} group ${verification.group_id}: restricted=${isRestricted}, satisfied=${result.satisfied}, nft=${result.nftSatisfied}, balance=${result.balanceSatisfied}`);
-
-      // Check if condition state changed
-      const cacheKey = key;
-      const newStateKey = getConditionStateKey(result);
-      const oldStateKey = conditionStateCache.get(cacheKey);
-
-      if (result.satisfied && isRestricted) {
-        // Now qualifies - unrestrict
-        console.log(`[subscription] User ${verification.telegram_user_id} now qualifies - granting access!`);
-        conditionStateCache.set(cacheKey, newStateKey);
-        await notifyConditionProgress(verification, rules, result);
-        await grantAccess(verification, result);
-      } else if (!result.satisfied && !isRestricted) {
-        // No longer qualifies - restrict
-        console.log(`[subscription] User ${verification.telegram_user_id} no longer qualifies - restricting`);
-        conditionStateCache.set(cacheKey, newStateKey);
-        await revokeAccess(verification);
-      } else if (isRestricted && oldStateKey !== newStateKey) {
-        // Still restricted but state changed - notify progress
-        console.log(`[subscription] Condition state changed for user ${verification.telegram_user_id}`);
-        conditionStateCache.set(cacheKey, newStateKey);
-        await notifyConditionProgress(verification, rules, result);
-      }
-    } catch (error) {
-      console.error(`[subscription] Error checking verification ${verification.id}:`, error);
     }
   }
 }
@@ -210,7 +215,7 @@ async function checkAddressVerifications(address: string): Promise<void> {
  * Grant access to user when they meet conditions
  */
 async function grantAccess(
-  verification: { id: number; telegram_user_id: number; group_id: number; bch_address: string },
+  membership: GroupMembership,
   result?: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
 ): Promise<void> {
   if (!botInstance) {
@@ -219,33 +224,30 @@ async function grantAccess(
   }
 
   try {
-    // Get pending kick info BEFORE deleting (need prompt_message_id)
-    const pendingKick = getPendingKick(verification.telegram_user_id, verification.group_id);
-
-    // Remove from pending kicks (marks them as having access)
-    deletePendingKick(verification.telegram_user_id, verification.group_id);
+    // Update membership status to authorized
+    setMembershipStatus(membership.telegram_user_id, membership.group_id, 'authorized');
 
     // Clear cached status message
-    const cacheKey = `${verification.telegram_user_id}:${verification.group_id}`;
+    const cacheKey = `${membership.telegram_user_id}:${membership.group_id}`;
     statusMessageCache.delete(cacheKey);
 
     // Check if user is admin/owner - if so, skip unrestrict (they don't need it)
     let isAdmin = false;
     try {
-      const member = await botInstance.api.getChatMember(verification.group_id, verification.telegram_user_id);
+      const member = await botInstance.api.getChatMember(membership.group_id, membership.telegram_user_id);
       isAdmin = member.status === 'administrator' || member.status === 'creator';
     } catch {
       // If we can't check, try to unrestrict anyway
     }
 
     if (!isAdmin) {
-      await unrestrictUser(botInstance.api, verification.group_id, verification.telegram_user_id);
+      await unrestrictUser(botInstance.api, membership.group_id, membership.telegram_user_id);
     }
 
     // Delete the verification prompt message from the group
-    if (pendingKick?.prompt_message_id) {
+    if (membership.prompt_message_id) {
       try {
-        await botInstance.api.deleteMessage(verification.group_id, pendingKick.prompt_message_id);
+        await botInstance.api.deleteMessage(membership.group_id, membership.prompt_message_id);
       } catch {
         // Message may have been deleted or is too old
       }
@@ -256,7 +258,7 @@ async function grantAccess(
       // Try to get the user's name
       let username = 'User';
       try {
-        const member = await botInstance.api.getChatMember(verification.group_id, verification.telegram_user_id);
+        const member = await botInstance.api.getChatMember(membership.group_id, membership.telegram_user_id);
         if ('user' in member && member.user) {
           username = member.user.username ? `@${member.user.username}` : member.user.first_name;
         }
@@ -264,22 +266,22 @@ async function grantAccess(
         // Ignore errors getting user info
       }
 
-      await sendVerifiedMessage(botInstance.api, verification.group_id, username);
+      await sendVerifiedMessage(botInstance.api, membership.group_id, username);
     } catch {
       // May fail if bot can't send to the group
     }
 
-    console.log(`[monitor] Granted access to user ${verification.telegram_user_id} in group ${verification.group_id}`);
+    console.log(`[monitor] Granted access to user ${membership.telegram_user_id} in group ${membership.group_id}`);
 
     // Notify user via DM
     try {
-      const group = getGroup(verification.group_id);
-      const groupName = escapeMarkdown(group?.name || `Group ${verification.group_id}`);
+      const group = getGroup(membership.group_id);
+      const groupName = escapeMarkdown(group?.name || `Group ${membership.group_id}`);
 
       // Try to get a link to the group
       let groupLink = '';
       try {
-        const chat = await botInstance.api.getChat(verification.group_id);
+        const chat = await botInstance.api.getChat(membership.group_id);
         if ('username' in chat && chat.username) {
           groupLink = `\n\nGo to group: https://t.me/${escapeMarkdown(chat.username)}`;
         } else if ('invite_link' in chat && chat.invite_link) {
@@ -290,7 +292,7 @@ async function grantAccess(
       }
 
       await botInstance.api.sendMessage(
-        verification.telegram_user_id,
+        membership.telegram_user_id,
         `🎉 **Great news!**\n\n` +
         `Your wallet now meets the access requirements!\n\n` +
         `You now have full access to **${groupName}**.${groupLink}`,
@@ -302,7 +304,7 @@ async function grantAccess(
     }
 
   } catch (error) {
-    console.error(`Error activating pending verification ${verification.id}:`, error);
+    console.error(`Error granting access for user ${membership.telegram_user_id}:`, error);
   }
 }
 
@@ -310,17 +312,17 @@ async function grantAccess(
  * Notify user of condition progress (some conditions changed but not fully satisfied)
  */
 async function notifyConditionProgress(
-  verification: { id: number; telegram_user_id: number; group_id: number; bch_address: string },
+  membership: GroupMembership,
   rules: AccessRule[],
   result: Awaited<ReturnType<typeof checkAccessRulesMultiAddress>>
 ): Promise<void> {
   if (!botInstance) return;
 
-  const cacheKey = `${verification.telegram_user_id}:${verification.group_id}`;
+  const cacheKey = `${membership.telegram_user_id}:${membership.group_id}`;
 
   try {
-    const group = getGroup(verification.group_id);
-    const groupName = escapeMarkdown(group?.name || `Group ${verification.group_id}`);
+    const group = getGroup(membership.group_id);
+    const groupName = escapeMarkdown(group?.name || `Group ${membership.group_id}`);
 
     let msg = `📊 **Condition Status for ${groupName}**\n\n`;
     msg += await formatRequirementsMessage(rules, result);
@@ -341,7 +343,7 @@ async function notifyConditionProgress(
     if (existingMsgId) {
       try {
         await botInstance.api.editMessageText(
-          verification.telegram_user_id,
+          membership.telegram_user_id,
           existingMsgId,
           msg,
           { parse_mode: 'Markdown' }
@@ -354,7 +356,7 @@ async function notifyConditionProgress(
 
     // Send new message and cache its ID
     const sentMsg = await botInstance.api.sendMessage(
-      verification.telegram_user_id,
+      membership.telegram_user_id,
       msg,
       { parse_mode: 'Markdown' }
     );
@@ -366,12 +368,12 @@ async function notifyConditionProgress(
 }
 
 /**
- * Check all verifications and kick users who no longer qualify
+ * Check all memberships and update access status
  */
 async function checkAllVerifications(): Promise<void> {
-  const verifications = getVerificationsForMonitoring();
+  const memberships = getAllGroupMemberships();
 
-  if (verifications.length === 0) {
+  if (memberships.length === 0) {
     return;
   }
 
@@ -383,40 +385,30 @@ async function checkAllVerifications(): Promise<void> {
   let errors = 0;
   const groupCounts = new Map<number, number>();
 
-  // Group verifications by user+group to handle multi-address checking
-  const userGroupMap = new Map<string, typeof verifications>();
-  for (const v of verifications) {
-    const key = `${v.telegram_user_id}:${v.group_id}`;
-    if (!userGroupMap.has(key)) {
-      userGroupMap.set(key, []);
-    }
-    userGroupMap.get(key)!.push(v);
-  }
-
-  for (const [key, userVerifications] of userGroupMap) {
-    const verification = userVerifications[0]; // Representative verification
-    groupCounts.set(verification.group_id, (groupCounts.get(verification.group_id) || 0) + 1);
+  for (const membership of memberships) {
+    groupCounts.set(membership.group_id, (groupCounts.get(membership.group_id) || 0) + 1);
 
     try {
       // Get access rules for this group
-      const rules = getAccessRules(verification.group_id);
+      const rules = getAccessRules(membership.group_id);
 
       // If no rules, skip
       if (rules.length === 0) continue;
 
-      // Get all addresses for this user in this group
+      // Get all addresses for this user (global verifications)
+      const userVerifications = getVerificationsForUser(membership.telegram_user_id);
       const userAddresses = [...new Set(userVerifications.map(v => v.bch_address))];
 
       // Check access rules against all user's addresses
       const result = await checkAccessRulesMultiAddress(userAddresses, rules);
 
-      // Check if user is currently restricted
-      const isRestricted = !!getPendingKick(verification.telegram_user_id, verification.group_id);
+      // Check current status
+      const isRestricted = membership.status === 'restricted';
 
       if (result.satisfied) {
         if (isRestricted) {
           // Now qualifies - grant access
-          await grantAccess(verification, result);
+          await grantAccess(membership, result);
           activated++;
         } else {
           valid++;
@@ -428,16 +420,16 @@ async function checkAllVerifications(): Promise<void> {
           if (botInstance) {
             try {
               const member = await botInstance.api.getChatMember(
-                verification.group_id,
-                verification.telegram_user_id
+                membership.group_id,
+                membership.telegram_user_id
               );
               if (member.status !== 'administrator' && member.status !== 'creator' && member.status !== 'restricted') {
                 await botInstance.api.restrictChatMember(
-                  verification.group_id,
-                  verification.telegram_user_id,
+                  membership.group_id,
+                  membership.telegram_user_id,
                   { can_send_messages: false }
                 );
-                console.log(`[monitor] Restricted user ${verification.telegram_user_id} in group ${verification.group_id}`);
+                console.log(`[monitor] Restricted user ${membership.telegram_user_id} in group ${membership.group_id}`);
               }
             } catch (e) {
               // Ignore errors (user may have left, bot may not have permission)
@@ -446,14 +438,14 @@ async function checkAllVerifications(): Promise<void> {
         } else {
           // No longer qualifies - revoke access
           invalid++;
-          console.log(`[monitor] User ${verification.telegram_user_id} no longer qualifies - will restrict`);
-          await revokeAccess(verification);
+          console.log(`[monitor] User ${membership.telegram_user_id} no longer qualifies - will restrict`);
+          await revokeAccess(membership);
         }
       }
     } catch (error) {
       errors++;
       console.error(
-        `Error checking verification ${verification.id}:`,
+        `Error checking membership for user ${membership.telegram_user_id} group ${membership.group_id}:`,
         error
       );
     }
@@ -470,19 +462,14 @@ async function checkAllVerifications(): Promise<void> {
   const activatedInfo = activated > 0 ? `, ${activated} activated` : '';
   const pendingInfo = pending > 0 ? `, ${pending} pending` : '';
   console.log(
-    `[monitor] ${userGroupMap.size} user-groups | ${valid} valid, ${invalid} invalid${activatedInfo}${pendingInfo}, ${errors} errors | groups: ${groupInfo}`
+    `[monitor] ${memberships.length} memberships | ${valid} valid, ${invalid} invalid${activatedInfo}${pendingInfo}, ${errors} errors | groups: ${groupInfo}`
   );
 }
 
 /**
  * Revoke access when user no longer meets conditions
  */
-async function revokeAccess(verification: {
-  id: number;
-  telegram_user_id: number;
-  group_id: number;
-  bch_address: string;
-}): Promise<void> {
+async function revokeAccess(membership: GroupMembership): Promise<void> {
   if (!botInstance) {
     console.error('Bot instance not available for revoking access');
     return;
@@ -491,26 +478,26 @@ async function revokeAccess(verification: {
   try {
     // Check if user is admin/creator - don't restrict them
     const member = await botInstance.api.getChatMember(
-      verification.group_id,
-      verification.telegram_user_id
+      membership.group_id,
+      membership.telegram_user_id
     );
 
     if (member.status === 'administrator' || member.status === 'creator') {
-      console.log(`User ${verification.telegram_user_id} is admin/creator - not restricting`);
+      console.log(`User ${membership.telegram_user_id} is admin/creator - not restricting`);
       return;
     }
 
-    // Add to pending kicks (marks them as restricted)
-    addPendingKick(verification.telegram_user_id, verification.group_id);
+    // Update membership status to restricted
+    setMembershipStatus(membership.telegram_user_id, membership.group_id, 'restricted');
 
     // Restrict the user
     try {
       await botInstance.api.restrictChatMember(
-        verification.group_id,
-        verification.telegram_user_id,
+        membership.group_id,
+        membership.telegram_user_id,
         { can_send_messages: false }
       );
-      console.log(`[monitor] Revoked access for user ${verification.telegram_user_id} in group ${verification.group_id}`);
+      console.log(`[monitor] Revoked access for user ${membership.telegram_user_id} in group ${membership.group_id}`);
     } catch (restrictError) {
       console.error('Could not restrict user:', restrictError);
     }
@@ -522,7 +509,7 @@ async function revokeAccess(verification: {
         username = member.user.username ? `@${member.user.username}` : member.user.first_name;
       }
       await botInstance.api.sendMessage(
-        verification.group_id,
+        membership.group_id,
         `🚫 ${username} restricted (no longer meets requirements)`,
       );
     } catch {
@@ -531,10 +518,10 @@ async function revokeAccess(verification: {
 
     // Notify the user
     try {
-      const group = getGroup(verification.group_id);
-      const groupName = escapeMarkdown(group?.name || `Group ${verification.group_id}`);
+      const group = getGroup(membership.group_id);
+      const groupName = escapeMarkdown(group?.name || `Group ${membership.group_id}`);
       await botInstance.api.sendMessage(
-        verification.telegram_user_id,
+        membership.telegram_user_id,
         `⚠️ Your wallet no longer meets the access requirements for **${groupName}**.\n\n` +
         `You've been restricted until you meet the requirements again.\n\n` +
         `I'm still monitoring your address - you'll be automatically re-activated!`,
@@ -545,7 +532,7 @@ async function revokeAccess(verification: {
     }
 
   } catch (error) {
-    console.error(`Error revoking access for user ${verification.telegram_user_id}:`, error);
+    console.error(`Error revoking access for user ${membership.telegram_user_id}:`, error);
   }
 }
 
@@ -556,9 +543,7 @@ export async function checkUserVerification(
   telegramUserId: number,
   groupId: number
 ): Promise<boolean> {
-  const verifications = getVerificationsForMonitoring().filter(
-    v => v.telegram_user_id === telegramUserId && v.group_id === groupId
-  );
+  const verifications = getVerificationsForUser(telegramUserId);
 
   if (verifications.length === 0) {
     return false;
@@ -576,66 +561,52 @@ export async function checkUserVerification(
 }
 
 /**
- * Check all verifications for a specific group (e.g., after condition removal)
+ * Check all memberships for a specific group (e.g., after condition removal)
  */
 export async function checkGroupVerifications(groupId: number): Promise<{
   checked: number;
   valid: number;
   invalid: number;
 }> {
-  const verifications = getVerificationsForMonitoring().filter(
-    v => v.group_id === groupId
-  );
-
+  const memberships = getAllGroupMemberships().filter(m => m.group_id === groupId);
   const rules = getAccessRules(groupId);
 
   let valid = 0;
   let invalid = 0;
 
-  // Group by user to handle multi-address
-  const userMap = new Map<number, typeof verifications>();
-  for (const v of verifications) {
-    if (!userMap.has(v.telegram_user_id)) {
-      userMap.set(v.telegram_user_id, []);
-    }
-    userMap.get(v.telegram_user_id)!.push(v);
-  }
-
-  for (const [userId, userVerifications] of userMap) {
-    const verification = userVerifications[0];
-
+  for (const membership of memberships) {
     try {
-      // If no rules left, all users with verifications should be restricted
+      // If no rules left, all authorized users should be restricted
       if (rules.length === 0) {
-        const isRestricted = !!getPendingKick(userId, groupId);
-        if (!isRestricted) {
+        if (membership.status === 'authorized') {
           invalid++;
-          await revokeAccess(verification);
+          await revokeAccess(membership);
         }
         continue;
       }
 
-      // Get all addresses for this user
+      // Get all addresses for this user (global verifications)
+      const userVerifications = getVerificationsForUser(membership.telegram_user_id);
       const userAddresses = [...new Set(userVerifications.map(v => v.bch_address))];
 
       // Check access rules
       const result = await checkAccessRulesMultiAddress(userAddresses, rules);
-      const isRestricted = !!getPendingKick(userId, groupId);
+      const isRestricted = membership.status === 'restricted';
 
       if (!result.satisfied && !isRestricted) {
         invalid++;
-        console.log(`[monitor] Group check: user ${userId} no longer qualifies - will restrict`);
-        await revokeAccess(verification);
+        console.log(`[monitor] Group check: user ${membership.telegram_user_id} no longer qualifies - will restrict`);
+        await revokeAccess(membership);
       } else if (result.satisfied && isRestricted) {
         valid++;
-        await grantAccess(verification, result);
+        await grantAccess(membership, result);
       } else {
         valid++;
       }
     } catch (error) {
-      console.error(`[monitor] Error checking verification ${verification.id}:`, error);
+      console.error(`[monitor] Error checking membership for user ${membership.telegram_user_id}:`, error);
     }
   }
 
-  return { checked: userMap.size, valid, invalid };
+  return { checked: memberships.length, valid, invalid };
 }

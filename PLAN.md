@@ -70,15 +70,14 @@ CREATE TABLE group_access_rules (
   UNIQUE(group_id, rule_type, category, start_commitment, end_commitment)
 );
 
--- Verified addresses: proves user owns address for a group
+-- Verified addresses: proves user owns address (global, not per-group)
 CREATE TABLE verifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   telegram_user_id INTEGER NOT NULL,
-  group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
   bch_address TEXT NOT NULL,
   verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   telegram_username TEXT,
-  UNIQUE(telegram_user_id, bch_address, group_id)
+  UNIQUE(telegram_user_id, bch_address)
 );
 
 -- Pending verification challenges
@@ -92,15 +91,16 @@ CREATE TABLE challenges (
   expires_at DATETIME
 );
 
--- Track users who need verification (restricted until they qualify)
-CREATE TABLE pending_kicks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+-- Track group memberships and their access status
+CREATE TABLE group_memberships (
   telegram_user_id INTEGER NOT NULL,
   group_id INTEGER NOT NULL,
-  kicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  status TEXT NOT NULL DEFAULT 'restricted',  -- 'restricted' | 'authorized'
+  joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  warning_sent BOOLEAN DEFAULT 0,
+  kick_at DATETIME,
   prompt_message_id INTEGER,        -- Message ID of verification prompt in group
-  warned_at DATETIME,               -- When user was warned about impending timeout
-  UNIQUE(telegram_user_id, group_id)
+  PRIMARY KEY (telegram_user_id, group_id)
 );
 
 -- Token metadata cache (BCMR)
@@ -261,23 +261,18 @@ Support gating by asset balances and NFT commitment ranges.
 - [x] In group: sends status via DM, deletes command from group
 - [x] Reuses `formatRequirementsMessage()` for consistent display
 
-### Phase 12 (Future): Cross-Group Verification Reuse
-When a user joins a new group, automatically check if they have verified addresses elsewhere that qualify for access.
+### Phase 12: Global Verifications & Group Memberships (COMPLETE)
+Verifications are now global (prove "user owns address"), not per-group. Access is tracked via `group_memberships` table with status.
 
-**Problem:** Users must verify separately for each group, even with the same address.
-
-**Approach: Auto-reuse on join**
-- When user joins a group, check all their verified addresses (from any group)
-- If any address satisfies the new group's conditions, auto-grant access
-- Keep `group_id` in verifications table for per-group control
-- User can `/unverify` if they don't want reuse
-
-**Implementation:**
-- [ ] Query all user's verified addresses across groups on join
-- [ ] Check each address against new group's access rules
-- [ ] If qualifying address found, create verification for new group + grant access
-- [ ] Skip the kick/DM flow entirely for reused verifications
-- [ ] Log reuse events for transparency
+**Changes:**
+- [x] Removed `group_id` from verifications table
+- [x] Renamed `pending_kicks` to `group_memberships` with `status` column ('restricted' | 'authorized')
+- [x] Auto-migration from old schema to new schema
+- [x] On join: check user's global verifications against group rules
+- [x] If qualifies, add as 'authorized'; otherwise 'restricted'
+- [x] On message from unknown user: check verifications, insert appropriate membership
+- [x] Monitor checks all memberships, updates status as conditions change
+- [x] `/unverify` affects all groups (re-checks each membership)
 
 ### Phase 13 (Future): HODL/VOX Vault Verification
 Support checking coin lockups in HODL plugin or VOX vault as access conditions.

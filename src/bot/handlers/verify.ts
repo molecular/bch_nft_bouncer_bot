@@ -5,12 +5,12 @@ import {
   getActiveChallenge,
   updateChallengeAddress,
   deleteChallenge,
-  getPendingKicksForUser,
-  getPendingKick,
-  addPendingKick,
-  deletePendingKick,
+  getRestrictedMembershipsForUser,
+  getGroupMembership,
+  addGroupMembership,
+  deleteGroupMembership,
+  setMembershipStatus,
   addVerification,
-  getVerification,
   getVerificationByAddress,
   getVerificationsForUser,
   getVerificationById,
@@ -20,7 +20,7 @@ import {
   isGroupConfigured,
   getAccessRules,
   getVerificationsByAddress,
-  getVerificationsForMonitoring,
+  getGroupMembershipsForUser,
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
@@ -72,15 +72,15 @@ verifyHandlers.command('start', async (ctx: Context) => {
   }
 
   // Regular /start
-  const pendingKicks = getPendingKicksForUser(userId);
+  const restrictedMemberships = getRestrictedMembershipsForUser(userId);
 
-  if (pendingKicks.length > 0) {
+  if (restrictedMemberships.length > 0) {
     // User has pending verifications
     let msg = `👋 Welcome! You need to verify your wallet to access the following group(s):\n\n`;
 
-    for (const pk of pendingKicks) {
-      const group = getGroup(pk.group_id);
-      msg += `• ${group?.name || `Group ${pk.group_id}`}\n`;
+    for (const m of restrictedMemberships) {
+      const group = getGroup(m.group_id);
+      msg += `• ${group?.name || `Group ${m.group_id}`}\n`;
     }
 
     msg += `\nUse /verify to start the verification process.`;
@@ -116,9 +116,9 @@ verifyHandlers.command('verify', async (ctx: Context) => {
   }
 
   const userId = ctx.from!.id;
-  const pendingKicks = getPendingKicksForUser(userId);
+  const restrictedMemberships = getRestrictedMembershipsForUser(userId);
 
-  if (pendingKicks.length === 0) {
+  if (restrictedMemberships.length === 0) {
     await ctx.reply(
       "You don't have any pending verifications.\n\n" +
       "If you want to join a gated group, join it first and you'll be directed here for verification."
@@ -126,15 +126,15 @@ verifyHandlers.command('verify', async (ctx: Context) => {
     return;
   }
 
-  if (pendingKicks.length === 1) {
-    await startVerification(ctx, userId, pendingKicks[0].group_id);
+  if (restrictedMemberships.length === 1) {
+    await startVerification(ctx, userId, restrictedMemberships[0].group_id);
   } else {
     // Multiple groups - let user choose
     let msg = `You have pending verifications for multiple groups:\n\n`;
 
-    pendingKicks.forEach((pk, i) => {
-      const group = getGroup(pk.group_id);
-      msg += `${i + 1}. ${group?.name || `Group ${pk.group_id}`}\n`;
+    restrictedMemberships.forEach((m, i) => {
+      const group = getGroup(m.group_id);
+      msg += `${i + 1}. ${group?.name || `Group ${m.group_id}`}\n`;
     });
 
     msg += `\nReply with the number of the group you want to verify for, or use the verification link sent when you joined.`;
@@ -156,8 +156,8 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     return;
   }
 
-  // Check for existing verifications for this group
-  const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === groupId);
+  // Check for existing verifications (global, not per-group)
+  const existingVerifications = getVerificationsForUser(userId);
   const provenAddresses = [...new Set(existingVerifications.map(v => v.bch_address))];
 
   // Store state
@@ -191,7 +191,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     // Check if already satisfied
     if (result.satisfied) {
       msg += `\n✅ **All requirements satisfied!**\n`;
-      deletePendingKick(userId, groupId);
+      setMembershipStatus(userId, groupId, 'authorized');
       verificationState.delete(userId);
       await ctx.reply(msg, { parse_mode: 'Markdown' });
       await addUserToGroup(ctx, userId, groupId);
@@ -472,20 +472,20 @@ verifyHandlers.command('sign', async (ctx: Context) => {
 
     // Check access rules
     const rules = getAccessRules(state.groupId);
-    const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+    const existingVerifications = getVerificationsForUser(userId);
     const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), state.address])];
     const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-    // Store verification
+    // Store verification (global, not per-group)
     const username = ctx.from?.username || null;
-    addVerification(userId, username, state.groupId, state.address);
+    addVerification(userId, username, state.address);
     await addAddressToMonitor(state.address);
     if (state.challenge) {
       deleteChallenge(state.challenge.id);
     }
 
     if (result.satisfied) {
-      deletePendingKick(userId, state.groupId);
+      setMembershipStatus(userId, state.groupId, 'authorized');
 
       // Build success message showing what was satisfied
       let msg = '✅ **Verification successful!**\n\n';
@@ -583,20 +583,20 @@ async function handleWcVerification(
 
         const address = addressInfos[0].address;
 
-        // Check if this address is already verified for this group
-        const existingForAddress = getVerificationByAddress(userId, state.groupId, address);
+        // Check if this address is already verified (global)
+        const existingForAddress = getVerificationByAddress(userId, address);
         if (existingForAddress) {
           // Already proved ownership of this address - just re-check conditions
           await ctx.reply('🔍 Re-checking conditions for your verified address...');
           await disconnectSession(userId);
 
           const rules = getAccessRules(state.groupId);
-          const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+          const existingVerifications = getVerificationsForUser(userId);
           const allAddresses = [...new Set(existingVerifications.map(v => v.bch_address))];
           const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
           if (result.satisfied) {
-            deletePendingKick(userId, state.groupId);
+            setMembershipStatus(userId, state.groupId, 'authorized');
 
             await ctx.reply(
               '✅ **All requirements now satisfied!**\n\n' +
@@ -623,7 +623,7 @@ async function handleWcVerification(
 
         // Get access rules and check this address + existing verifications
         const rules2 = getAccessRules(state.groupId);
-        const existingVerifications2 = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+        const existingVerifications2 = getVerificationsForUser(userId);
         const allAddresses2 = [...new Set([...existingVerifications2.map(v => v.bch_address), address])];
         const result2 = await checkAccessRulesMultiAddress(allAddresses2, rules2);
 
@@ -655,16 +655,16 @@ async function handleWcVerification(
             return;
           }
 
-          // Store verification
+          // Store verification (global, not per-group)
           const username = ctx.from?.username || null;
-          addVerification(userId, username, state.groupId, address);
+          addVerification(userId, username, address);
           await addAddressToMonitor(address);
           deleteChallenge(challenge.id);
           await disconnectSession(userId);
 
           // Check if all requirements are met
           if (result2.satisfied) {
-            deletePendingKick(userId, state.groupId);
+            setMembershipStatus(userId, state.groupId, 'authorized');
 
             await ctx.reply(
               '✅ **Verification successful!**\n\n' +
@@ -815,19 +815,19 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
     const address = text.startsWith('bitcoincash:') ? text : `bitcoincash:${text}`;
 
-    // Check if this address is already verified for this group
-    const existingForAddress = getVerificationByAddress(userId, state.groupId, address);
+    // Check if this address is already verified (global)
+    const existingForAddress = getVerificationByAddress(userId, address);
     if (existingForAddress) {
       // Already proved ownership of this address - just re-check conditions
       await ctx.reply('🔍 Re-checking conditions for your verified address...');
 
       const rules = getAccessRules(state.groupId);
-      const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+      const existingVerifications = getVerificationsForUser(userId);
       const allAddresses = [...new Set(existingVerifications.map(v => v.bch_address))];
       const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
       if (result.satisfied) {
-        deletePendingKick(userId, state.groupId);
+        setMembershipStatus(userId, state.groupId, 'authorized');
 
         await ctx.reply(
           '✅ **All requirements now satisfied!**\n\n' +
@@ -856,7 +856,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
     try {
       const rules = getAccessRules(state.groupId);
-      const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+      const existingVerifications = getVerificationsForUser(userId);
       const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), address])];
       const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
@@ -929,19 +929,19 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
     // Re-check access rules to determine status
     const rules = getAccessRules(state.groupId);
-    const existingVerifications = getVerificationsForUser(userId).filter(v => v.group_id === state.groupId);
+    const existingVerifications = getVerificationsForUser(userId);
     const allAddresses = [...new Set([...existingVerifications.map(v => v.bch_address), state.address])];
     const result = await checkAccessRulesMultiAddress(allAddresses, rules);
 
-    // Store verification
+    // Store verification (global, not per-group)
     const username = ctx.from?.username || null;
-    addVerification(userId, username, state.groupId, state.address);
+    addVerification(userId, username, state.address);
     await addAddressToMonitor(state.address);
     deleteChallenge(state.challenge.id);
 
     if (result.satisfied) {
       // All requirements met!
-      deletePendingKick(userId, state.groupId);
+      setMembershipStatus(userId, state.groupId, 'authorized');
 
       await ctx.reply(
         '✅ **Verification successful!**\n\n' +
@@ -974,7 +974,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
   }
 });
 
-// /list_verifications - Show all user's verifications
+// /list_verifications - Show all user's verifications (global addresses)
 verifyHandlers.command('list_verifications', async (ctx: Context) => {
   console.log('/list_verifications command received');
   if (ctx.chat?.type !== 'private') {
@@ -990,15 +990,11 @@ verifyHandlers.command('list_verifications', async (ctx: Context) => {
     return;
   }
 
-  let msg = '📋 **Your verifications:**\n\n';
+  let msg = '📋 **Your verified addresses:**\n\n';
 
   for (const v of verifications) {
-    const group = getGroup(v.group_id);
-    const groupName = group?.name || `Group ${v.group_id}`;
     const addressShort = v.bch_address.slice(0, 25) + '...';
-
-    msg += `**[${v.id}]**: ${groupName}\n`;
-    msg += `    📍 ${addressShort}\n\n`;
+    msg += `**[${v.id}]** 📍 ${addressShort}\n`;
   }
 
   msg += `\nUse \`/unverify <id>\` to remove a verification.`;
@@ -1013,10 +1009,11 @@ verifyHandlers.command('status', async (ctx: Context) => {
   const chatId = ctx.chat?.id;
 
   if (chatType === 'private') {
-    // DM: Show status for all groups user has verifications for
+    // DM: Show status for all groups user is a member of
     const verifications = getVerificationsForUser(userId);
+    const memberships = getGroupMembershipsForUser(userId);
 
-    if (verifications.length === 0) {
+    if (verifications.length === 0 && memberships.length === 0) {
       await ctx.reply(
         'You have no verifications yet.\n\n' +
         'Join a gated group or use /verify to get started.'
@@ -1024,15 +1021,21 @@ verifyHandlers.command('status', async (ctx: Context) => {
       return;
     }
 
-    // Get unique groups
-    const groupIds = [...new Set(verifications.map(v => v.group_id))];
+    // Use user's global addresses for all groups
+    const userAddresses = [...new Set(verifications.map(v => v.bch_address))];
+    const groupIds = [...new Set(memberships.map(m => m.group_id))];
 
     let msg = '📊 **Your verification status:**\n\n';
+
+    if (userAddresses.length > 0) {
+      msg += `**Verified addresses:** ${userAddresses.length}\n\n`;
+    }
 
     for (const groupId of groupIds) {
       const group = getGroup(groupId);
       const groupName = group?.name || `Group ${groupId}`;
       const rules = getAccessRules(groupId);
+      const membership = memberships.find(m => m.group_id === groupId);
 
       msg += `**${groupName}**\n`;
 
@@ -1041,16 +1044,10 @@ verifyHandlers.command('status', async (ctx: Context) => {
         continue;
       }
 
-      // Get user's addresses for this group
-      const userAddresses = verifications
-        .filter(v => v.group_id === groupId)
-        .map(v => v.bch_address);
-
       const result = await checkAccessRulesMultiAddress(userAddresses, rules);
-
       msg += await formatRequirementsMessage(rules, result);
 
-      if (result.satisfied) {
+      if (result.satisfied || membership?.status === 'authorized') {
         msg += `✅ _Access granted_\n\n`;
       } else {
         msg += `⏳ _Requirements not met_\n\n`;
@@ -1080,16 +1077,16 @@ verifyHandlers.command('status', async (ctx: Context) => {
       return;
     }
 
-    const verifications = getVerificationsForUser(userId).filter(v => v.group_id === chatId);
+    const verifications = getVerificationsForUser(userId);
     const group = getGroup(chatId);
     const groupName = group?.name || 'This group';
 
     let msg = `📊 **${groupName} status:**\n\n`;
 
     if (verifications.length === 0) {
-      // User has no verifications for this group
+      // User has no verifications
       msg += await formatRequirementsMessage(rules, null);
-      msg += `\n_You have no verified addresses for this group._\n`;
+      msg += `\n_You have no verified addresses._\n`;
       msg += `_Use /verify to verify your wallet._`;
     } else {
       const userAddresses = verifications.map(v => v.bch_address);
@@ -1149,9 +1146,6 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
     return;
   }
 
-  const group = getGroup(verification.group_id);
-  const groupName = group?.name || `Group ${verification.group_id}`;
-  const groupId = verification.group_id;
   const address = verification.bch_address;
 
   // Delete the verification
@@ -1164,50 +1158,43 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
     removeAddressFromMonitor(address);
   }
 
-  // Check if user still qualifies for the group with remaining verifications
-  const remainingVerifications = getVerificationsForMonitoring().filter(
-    v => v.telegram_user_id === userId && v.group_id === groupId
-  );
+  // Check all groups user is a member of - they may no longer qualify
+  const memberships = getGroupMembershipsForUser(userId);
+  const remainingVerifications = getVerificationsForUser(userId);
+  const remainingAddresses = [...new Set(remainingVerifications.map(v => v.bch_address))];
 
-  let restrictedMsg = '';
-  if (remainingVerifications.length > 0) {
-    // User has other verifications - check if they still qualify
-    const rules = getAccessRules(groupId);
-    if (rules.length > 0) {
-      const addresses = [...new Set(remainingVerifications.map(v => v.bch_address))];
-      const result = await checkAccessRulesMultiAddress(addresses, rules);
+  let restrictedGroups: string[] = [];
 
-      if (!result.satisfied) {
-        // User no longer qualifies - restrict them
-        try {
-          await ctx.api.restrictChatMember(groupId, userId, {
-            can_send_messages: false
-          });
-          // Add pending kick to track restricted status
-          addPendingKick(userId, groupId);
-          restrictedMsg = `\n\n⚠️ You no longer meet the access conditions for this group and have been restricted.`;
-        } catch (e) {
-          // May fail if bot doesn't have permission or user left
-        }
+  for (const membership of memberships) {
+    if (membership.status !== 'authorized') continue; // Already restricted
+
+    const rules = getAccessRules(membership.group_id);
+    if (rules.length === 0) continue;
+
+    const result = await checkAccessRulesMultiAddress(remainingAddresses, rules);
+
+    if (!result.satisfied) {
+      // User no longer qualifies - restrict them
+      try {
+        await ctx.api.restrictChatMember(membership.group_id, userId, {
+          can_send_messages: false
+        });
+        setMembershipStatus(userId, membership.group_id, 'restricted');
+        const group = getGroup(membership.group_id);
+        restrictedGroups.push(group?.name || `Group ${membership.group_id}`);
+      } catch (e) {
+        // May fail if bot doesn't have permission or user left
       }
     }
-  } else {
-    // No more verifications for this group - restrict user
-    try {
-      await ctx.api.restrictChatMember(groupId, userId, {
-        can_send_messages: false
-      });
-      // Add pending kick to prevent group message spam
-      addPendingKick(userId, groupId);
-      restrictedMsg = `\n\n⚠️ You no longer have any verified addresses for this group and have been restricted. Use /verify (or leave and re-join the group) to verify.`;
-    } catch (e) {
-      // May fail if bot doesn't have permission or user left
-    }
+  }
+
+  let restrictedMsg = '';
+  if (restrictedGroups.length > 0) {
+    restrictedMsg = `\n\n⚠️ You no longer meet the access conditions for: ${restrictedGroups.join(', ')}`;
   }
 
   await ctx.reply(
     `✅ Verification removed:\n\n` +
-    `Group: ${groupName}\n` +
     `Address: ${address.slice(0, 25)}...` +
     restrictedMsg
   );
@@ -1238,16 +1225,16 @@ async function addUserToGroup(
 ): Promise<void> {
   console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
   try {
-    // Get pending kick info before deleting (we need the prompt_message_id)
-    const pendingKick = getPendingKick(userId, groupId);
+    // Get membership info before updating (we need the prompt_message_id)
+    const membership = getGroupMembership(userId, groupId);
 
     await unrestrictUser(ctx.api, groupId, userId);
     console.log(`[addUserToGroup] Successfully unrestricted user ${userId}`);
 
     // Delete the verification prompt message from the group if we have the message ID
-    if (pendingKick?.prompt_message_id) {
+    if (membership?.prompt_message_id) {
       try {
-        await ctx.api.deleteMessage(groupId, pendingKick.prompt_message_id);
+        await ctx.api.deleteMessage(groupId, membership.prompt_message_id);
       } catch {
         // Message may have already been deleted or too old
       }
@@ -1286,56 +1273,5 @@ async function addUserToGroup(
   }
 }
 
-// Check group messages for unverified members (prompt once per user)
-verifyHandlers.on('message', async (ctx: Context, next) => {
-  // Only handle group messages
-  if (ctx.chat?.type === 'private') {
-    return next();
-  }
-
-  const userId = ctx.from?.id;
-  if (!userId) return next();
-
-  const chatId = ctx.chat!.id;
-
-  // Check if this group is configured for NFT gating
-  if (!isGroupConfigured(chatId)) {
-    return next();
-  }
-
-  // Check if user is already verified
-  const verification = getVerification(userId, chatId);
-  if (verification) {
-    return next();
-  }
-
-  // Check if we've already prompted this user (they're in pending_kicks)
-  const pending = getPendingKick(userId, chatId);
-  if (pending) {
-    return next();
-  }
-
-  // Check if user is admin (don't prompt admins)
-  try {
-    const member = await ctx.api.getChatMember(chatId, userId);
-    if (member.status === 'administrator' || member.status === 'creator') {
-      return next();
-    }
-  } catch {
-    // If we can't check, continue anyway
-  }
-
-  // First message from unverified member - prompt them once
-  addPendingKick(userId, chatId);
-
-  const botUsername = ctx.me.username;
-  const deepLink = `https://t.me/${botUsername}?start=verify_${chatId}`;
-  const username = ctx.from?.username ? `@${ctx.from.username}` : ctx.from?.first_name || 'there';
-
-  await ctx.reply(
-    `👋 Hey ${username}! This group requires NFT verification.\n\n` +
-    `Click here to verify: ${deepLink}`
-  );
-
-  return next();
-});
+// This handler is now replaced by the more comprehensive handler in join.ts
+// which checks existing verifications and properly manages membership status
