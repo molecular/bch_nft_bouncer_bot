@@ -11,6 +11,7 @@ import {
 } from '../../storage/queries.js';
 import { isValidCategoryId } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
+import { escapeMarkdown } from '../utils/format.js';
 import { checkGroupVerifications } from '../../blockchain/monitor.js';
 import type { AccessRule } from '../../storage/types.js';
 
@@ -480,7 +481,7 @@ adminHandlers.command('groupinfo', requireGroupAdmin, async (ctx: Context) => {
   const perms = await checkBotPermissions(ctx);
 
   let statusMsg = `📊 **Group Status**\n\n`;
-  statusMsg += `**Name:** ${group.name}\n`;
+  statusMsg += `**Name:** ${escapeMarkdown(group.name || 'Unknown')}\n`;
   statusMsg += `**ID:** ${group.id}\n`;
   statusMsg += `**Set up:** ${group.created_at}\n\n`;
 

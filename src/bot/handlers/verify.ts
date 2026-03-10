@@ -25,6 +25,7 @@ import {
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
 import { sendVerifiedMessage } from '../utils/verification.js';
+import { escapeMarkdown } from '../utils/format.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
@@ -92,7 +93,7 @@ verifyHandlers.command('start', async (ctx: Context) => {
       `I help Telegram groups restrict access based on wallet contents (NFTs, tokens, BCH balance).\n\n` +
       `**For users:**\n` +
       `• When you join a gated group, you'll be asked to verify your wallet\n` +
-      `• Use /verify to start verification\n\n` +
+      `• Use /help for available commands\n\n` +
       `**For group admins:**\n` +
       `• Add me to your group as an admin\n` +
       `• Use /adminhelp for setup instructions`,
@@ -168,7 +169,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
   });
 
   // Build the verification message
-  let msg = `🔐 **Verification for ${group.name}**\n\n`;
+  let msg = `🔐 **Verification for ${escapeMarkdown(group.name || 'Unknown Group')}**\n\n`;
 
   // Show existing verifications if any
   if (existingVerifications.length > 0) {
@@ -1033,7 +1034,7 @@ verifyHandlers.command('status', async (ctx: Context) => {
 
     for (const groupId of groupIds) {
       const group = getGroup(groupId);
-      const groupName = group?.name || `Group ${groupId}`;
+      const groupName = escapeMarkdown(group?.name || `Group ${groupId}`);
       const rules = getAccessRules(groupId);
       const membership = memberships.find(m => m.group_id === groupId);
 
@@ -1066,11 +1067,13 @@ verifyHandlers.command('status', async (ctx: Context) => {
       // May fail if bot lacks delete permission or message is old
     }
 
+    const group = getGroup(chatId);
+    const groupName = escapeMarkdown(group?.name || 'This group');
     const rules = getAccessRules(chatId);
 
     if (rules.length === 0) {
       try {
-        await ctx.api.sendMessage(userId, 'This group has no access conditions configured.');
+        await ctx.api.sendMessage(userId, `**${groupName}** has no access conditions configured.`, { parse_mode: 'Markdown' });
       } catch {
         await ctx.reply('Please start a DM with me first, then try again.');
       }
@@ -1078,8 +1081,6 @@ verifyHandlers.command('status', async (ctx: Context) => {
     }
 
     const verifications = getVerificationsForUser(userId);
-    const group = getGroup(chatId);
-    const groupName = group?.name || 'This group';
 
     let msg = `📊 **${groupName} status:**\n\n`;
 
