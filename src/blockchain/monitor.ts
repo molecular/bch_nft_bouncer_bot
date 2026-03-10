@@ -15,7 +15,6 @@ import {
   getAccessRules,
 } from '../storage/queries.js';
 import { unrestrictUser } from '../bot/utils/permissions.js';
-import { escapeMarkdown } from '../bot/utils/format.js';
 import { formatRequirementsMessage } from '../bot/handlers/verify.js';
 import type { Bot } from 'grammy';
 import type { AccessRule, GroupMembership } from '../storage/types.js';
@@ -276,16 +275,16 @@ async function grantAccess(
     // Notify user via DM
     try {
       const group = getGroup(membership.group_id);
-      const groupName = escapeMarkdown(group?.name || `Group ${membership.group_id}`);
+      const groupName = group?.name || `Group ${membership.group_id}`;
 
       // Try to get a link to the group
       let groupLink = '';
       try {
         const chat = await botInstance.api.getChat(membership.group_id);
         if ('username' in chat && chat.username) {
-          groupLink = `\n\nGo to group: https://t.me/${escapeMarkdown(chat.username)}`;
+          groupLink = `\n\nGo to group: https://t.me/${chat.username}`;
         } else if ('invite_link' in chat && chat.invite_link) {
-          groupLink = `\n\nGo to group: ${escapeMarkdown(chat.invite_link)}`;
+          groupLink = `\n\nGo to group: ${chat.invite_link}`;
         }
       } catch {
         // Ignore errors getting chat info
@@ -293,9 +292,9 @@ async function grantAccess(
 
       await botInstance.api.sendMessage(
         membership.telegram_user_id,
-        `🎉 **Great news!**\n\n` +
+        `🎉 *Great news!*\n\n` +
         `Your wallet now meets the access requirements!\n\n` +
-        `You now have full access to **${groupName}**.${groupLink}`,
+        `You now have full access to *${groupName}*.${groupLink}`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {
@@ -322,14 +321,14 @@ async function notifyConditionProgress(
 
   try {
     const group = getGroup(membership.group_id);
-    const groupName = escapeMarkdown(group?.name || `Group ${membership.group_id}`);
+    const groupName = group?.name || `Group ${membership.group_id}`;
 
-    let msg = `📊 **Condition Status for ${groupName}**\n\n`;
+    let msg = `*Condition Status for ${groupName}*\n\n`;
     msg += await formatRequirementsMessage(rules, result);
 
     // Add status summary
     if (result.satisfied) {
-      msg += `✅ _All requirements satisfied!_`;
+      msg += `_All requirements satisfied!_ 👍`;
     } else if (result.nftSatisfied && !result.balanceSatisfied) {
       msg += `_NFT requirement satisfied! Still need a balance condition._`;
     } else if (!result.nftSatisfied && result.balanceSatisfied) {
@@ -519,10 +518,10 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
     // Notify the user
     try {
       const group = getGroup(membership.group_id);
-      const groupName = escapeMarkdown(group?.name || `Group ${membership.group_id}`);
+      const groupName = group?.name || `Group ${membership.group_id}`;
       await botInstance.api.sendMessage(
         membership.telegram_user_id,
-        `⚠️ Your wallet no longer meets the access requirements for **${groupName}**.\n\n` +
+        `⚠️ Your wallet no longer meets the access requirements for *${groupName}*.\n\n` +
         `You've been restricted until you meet the requirements again.\n\n` +
         `I'm still monitoring your address - you'll be automatically re-activated!`,
         { parse_mode: 'Markdown' }

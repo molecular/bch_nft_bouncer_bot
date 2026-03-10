@@ -21,16 +21,16 @@ export function createBot(): Bot {
   bot.command('help', async (ctx) => {
     if (ctx.chat?.type === 'private') {
       await ctx.reply(
-        `🤖 **BCH Wallet Verification Bot**\n\n` +
+        `*BCH Wallet Verification Bot*\n\n` +
         `I help Telegram groups restrict access based on wallet contents.\n\n` +
-        `**User Commands:**\n` +
+        `*--- User Commands ---*\n` +
         `/verify - Verify your wallet\n` +
         `/status - Check your access status\n` +
         `/list\\_verifications - List your verifications\n` +
         `/unverify - Remove a verification\n` +
         `/cancel - Cancel verification\n` +
         `/help - Show this help\n\n` +
-        `**Admin Commands (in groups):**\n` +
+        `*--- Admin Commands ---*\n` +
         `/setup - Initialize bot for group\n` +
         `/add\\_condition - Add access condition\n` +
         `/remove\\_condition - Remove access condition\n` +

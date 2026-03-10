@@ -25,7 +25,6 @@ import {
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
 import { sendVerifiedMessage } from '../utils/verification.js';
-import { escapeMarkdown } from '../utils/format.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
@@ -91,10 +90,10 @@ verifyHandlers.command('start', async (ctx: Context) => {
     await ctx.reply(
       `👋 Welcome to the BCH Wallet Verification Bot!\n\n` +
       `I help Telegram groups restrict access based on wallet contents (NFTs, tokens, BCH balance).\n\n` +
-      `**For users:**\n` +
+      `*For users:*\n` +
       `• When you join a gated group, you'll be asked to verify your wallet\n` +
       `• Use /help for available commands\n\n` +
-      `**For group admins:**\n` +
+      `*For group admins:*\n` +
       `• Add me to your group as an admin\n` +
       `• Use /adminhelp for setup instructions`,
       { parse_mode: 'Markdown' }
@@ -169,11 +168,11 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
   });
 
   // Build the verification message
-  let msg = `🔐 **Verification for ${escapeMarkdown(group.name || 'Unknown Group')}**\n\n`;
+  let msg = `*Verification for ${group.name || 'Unknown Group'}*\n\n`;
 
   // Show existing verifications if any
   if (existingVerifications.length > 0) {
-    msg += `📋 **Your verified addresses:**\n`;
+    msg += `*Your verified addresses:*\n`;
     for (const v of existingVerifications) {
       const addressShort = v.bch_address.slice(12, 22) + '...';
       msg += `• ${addressShort}\n`;
@@ -186,12 +185,12 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     const result = await checkAccessRulesMultiAddress(provenAddresses, rules);
 
     // Show requirements with status
-    msg += `**Requirements:**\n\n`;
+    msg += `*Requirements:*\n\n`;
     msg += await formatRequirementsMessage(rules, result);
 
     // Check if already satisfied
     if (result.satisfied) {
-      msg += `\n✅ **All requirements satisfied!**\n`;
+      msg += `\n✅ *All requirements satisfied!*\n`;
       setMembershipStatus(userId, groupId, 'authorized');
       verificationState.delete(userId);
       await ctx.reply(msg, { parse_mode: 'Markdown' });
@@ -209,7 +208,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     }
   } else {
     // No verifications yet - show all requirements
-    msg += `**Requirements:**\n\n`;
+    msg += `*Requirements:*\n\n`;
     msg += await formatRequirementsMessage(rules, null);
   }
 
@@ -220,7 +219,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
     await startWalletConnectFlow(ctx, userId, state);
   } else {
     // No WC configured - show manual-only instructions
-    msg += `\n**To verify:**\nSend your BCH address\n`;
+    msg += `\n*To verify:*\nSend your BCH address\n`;
     msg += `Example: \`bitcoincash:qr...\`\n\n`;
     msg += `_You can verify multiple addresses if needed._`;
     await ctx.reply(msg, { parse_mode: 'Markdown' });
@@ -238,7 +237,7 @@ export async function formatRequirementsMessage(
   let msg = '';
 
   if (nftRules.length > 0) {
-    msg += `**NFT** _(at least one)_\n`;
+    msg += `  *NFT:* _(at least one)_\n`;
 
     // Fetch metadata for all categories
     const categories = [...new Set(nftRules.map(r => r.category).filter(Boolean))];
@@ -252,11 +251,11 @@ export async function formatRequirementsMessage(
     for (const rule of nftRules) {
       const ruleResult = checkResult?.nftResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
-      const icon = satisfied ? '✅' : '▫️';
+      const icon = satisfied ? '■' : '□';
       const metadata = rule.category ? metadataMap.get(rule.category) : null;
       const displayName = rule.label || (rule.category ? formatTokenName(rule.category, metadata) : 'Unknown');
 
-      msg += `${icon} ${displayName}`;
+      msg += `    ${icon} ${displayName}`;
       if (rule.start_commitment && rule.end_commitment) {
         msg += ` (${rule.start_commitment}-${rule.end_commitment})`;
       }
@@ -266,12 +265,12 @@ export async function formatRequirementsMessage(
   }
 
   if (balanceRules.length > 0) {
-    msg += `**Balance** _(at least one)_\n`;
+    msg += `  *Balance:* _(at least one)_\n`;
 
     for (const rule of balanceRules) {
       const ruleResult = checkResult?.balanceResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
-      const icon = satisfied ? '✅' : '▫️';
+      const icon = satisfied ? '■' : '□';
 
       let displayName: string;
       if (rule.label) {
@@ -287,7 +286,7 @@ export async function formatRequirementsMessage(
         displayName = `${rule.min_amount} ${tokenName}`;
       }
 
-      msg += `${icon} ${displayName}\n`;
+      msg += `    ${icon} ${displayName}\n`;
     }
     msg += '\n';
   }
@@ -375,7 +374,7 @@ async function startWalletConnectFlow(
     // Send QR code
     const qrMsg = await ctx.replyWithPhoto(new InputFile(qrBuffer, 'walletconnect.png'), {
       caption:
-        '📱 **Scan with your BCH wallet** (Paytaca, Cashonize, ...)\n\n' +
+        '*Scan with your BCH wallet* (Paytaca, Cashonize, ...)\n\n' +
         'Or copy this link:',
       parse_mode: 'Markdown',
     });
@@ -387,7 +386,7 @@ async function startWalletConnectFlow(
 
     // Fallback option - prominent message for users without WC wallets
     const fallbackMsg = await ctx.reply(
-      '💡 **Not using WalletConnect?**\n' +
+      '*Not using WalletConnect?*\n' +
       'Send your BCH address for manual verification:\n' +
       'Example: `bitcoincash:qr...`',
       { parse_mode: 'Markdown' }
@@ -489,7 +488,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       setMembershipStatus(userId, state.groupId, 'authorized');
 
       // Build success message showing what was satisfied
-      let msg = '✅ **Verification successful!**\n\n';
+      let msg = '✅ *Verification successful!*\n\n';
       msg += formatSatisfiedConditions(result);
       msg += '\nYou now have full access to the group!';
 
@@ -499,9 +498,9 @@ verifyHandlers.command('sign', async (ctx: Context) => {
       await addUserToGroup(ctx, userId, state.groupId);
     } else {
       // Show progress
-      let msg = '✅ **Address verified!**\n\n';
+      let msg = '✅ *Address verified!*\n\n';
       msg += `Address: \`${state.address.slice(0, 20)}...\`\n\n`;
-      msg += '**Condition Progress:**\n\n';
+      msg += '*Condition Progress:*\n\n';
       msg += await formatRequirementsMessage(rules, result);
       msg += `\nProve another address via /wc or paste address, or /cancel.`;
 
@@ -600,7 +599,7 @@ async function handleWcVerification(
             setMembershipStatus(userId, state.groupId, 'authorized');
 
             await ctx.reply(
-              '✅ **All requirements now satisfied!**\n\n' +
+              '✅ *All requirements now satisfied!*\n\n' +
               await formatRequirementsMessage(rules, result),
               { parse_mode: 'Markdown' }
             );
@@ -608,7 +607,7 @@ async function handleWcVerification(
             verificationState.delete(userId);
           } else {
             // Still pending - show progress
-            let msg = '📊 **Current Status:**\n\n';
+            let msg = '*Current Status:*\n\n';
             msg += await formatRequirementsMessage(rules, result);
             if (result.nftSatisfied && !result.balanceSatisfied) {
               msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
@@ -668,7 +667,7 @@ async function handleWcVerification(
             setMembershipStatus(userId, state.groupId, 'authorized');
 
             await ctx.reply(
-              '✅ **Verification successful!**\n\n' +
+              '✅ *Verification successful!*\n\n' +
               'All requirements satisfied!',
               { parse_mode: 'Markdown' }
             );
@@ -677,9 +676,9 @@ async function handleWcVerification(
             verificationState.delete(userId);
           } else {
             // Show progress
-            let msg = '✅ **Address verified!**\n\n';
+            let msg = '✅ *Address verified!*\n\n';
             msg += `Address: \`${address.slice(0, 20)}...\`\n\n`;
-            msg += '**Condition Progress:**\n\n';
+            msg += '*Condition Progress:*\n\n';
             msg += await formatRequirementsMessage(rules2, result2);
 
             // Show what's still needed
@@ -831,7 +830,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
         setMembershipStatus(userId, state.groupId, 'authorized');
 
         await ctx.reply(
-          '✅ **All requirements now satisfied!**\n\n' +
+          '✅ *All requirements now satisfied!*\n\n' +
           await formatRequirementsMessage(rules, result),
           { parse_mode: 'Markdown' }
         );
@@ -839,7 +838,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
         verificationState.delete(userId);
       } else {
         // Still pending - show progress
-        let msg = '📊 **Current Status:**\n\n';
+        let msg = '*Current Status:*\n\n';
         msg += await formatRequirementsMessage(rules, result);
         if (result.nftSatisfied && !result.balanceSatisfied) {
           msg += `_NFT requirement satisfied! Still need a balance condition._\n\n`;
@@ -880,7 +879,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
       let msg = '';
       if (result.satisfied) {
-        msg = `✅ **Requirements satisfied!**\n\n`;
+        msg = `✅ *Requirements satisfied!*\n\n`;
       } else if (nft) {
         const nftMetadata = await fetchTokenMetadata(nft.category);
         const nftDisplay = formatNftDisplay(nft.category, nft.commitment, nftMetadata);
@@ -891,10 +890,10 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
         msg += `You can still verify now. I'll monitor your address and grant access when requirements are met.\n\n`;
       }
 
-      msg += `**Sign this message in your wallet:**\n\n`;
+      msg += `*Sign this message in your wallet:*\n\n`;
       msg += `\`\`\`\n${challengeMessage}\n\`\`\`\n\n`;
       msg += `In Electron Cash: Tools → Sign/verify message\n\n`;
-      msg += `Then paste the **signature** here (base64 text).`;
+      msg += `Then paste the *signature* here (base64 text).`;
 
       await ctx.reply(msg, { parse_mode: 'Markdown' });
 
@@ -945,7 +944,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
       setMembershipStatus(userId, state.groupId, 'authorized');
 
       await ctx.reply(
-        '✅ **Verification successful!**\n\n' +
+        '✅ *Verification successful!*\n\n' +
         'All requirements satisfied!',
         { parse_mode: 'Markdown' }
       );
@@ -954,9 +953,9 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
       verificationState.delete(userId);
     } else {
       // Show progress
-      let msg = '✅ **Address verified!**\n\n';
+      let msg = '✅ *Address verified!*\n\n';
       msg += `Address: \`${state.address.slice(0, 20)}...\`\n\n`;
-      msg += '**Condition Progress:**\n\n';
+      msg += '*Condition Progress:*\n\n';
       msg += await formatRequirementsMessage(rules, result);
 
       if (result.nftSatisfied && !result.balanceSatisfied) {
@@ -991,11 +990,11 @@ verifyHandlers.command('list_verifications', async (ctx: Context) => {
     return;
   }
 
-  let msg = '📋 **Your verified addresses:**\n\n';
+  let msg = '*Your verified addresses:*\n\n';
 
   for (const v of verifications) {
     const addressShort = v.bch_address.slice(0, 25) + '...';
-    msg += `**[${v.id}]** 📍 ${addressShort}\n`;
+    msg += `*[${v.id}]* ${addressShort}\n`;
   }
 
   msg += `\nUse \`/unverify <id>\` to remove a verification.`;
@@ -1026,22 +1025,22 @@ verifyHandlers.command('status', async (ctx: Context) => {
     const userAddresses = [...new Set(verifications.map(v => v.bch_address))];
     const groupIds = [...new Set(memberships.map(m => m.group_id))];
 
-    let msg = '📊 **Your verification status:**\n\n';
+    let msg = '*Your verification status:*\n\n';
 
     if (userAddresses.length > 0) {
-      msg += `**Verified addresses:** ${userAddresses.length}\n\n`;
+      msg += `*Verified addresses:* ${userAddresses.length}\n\n`;
     }
 
     for (const groupId of groupIds) {
       const group = getGroup(groupId);
-      const groupName = escapeMarkdown(group?.name || `Group ${groupId}`);
+      const groupName = group?.name || `Group ${groupId}`;
       const rules = getAccessRules(groupId);
       const membership = memberships.find(m => m.group_id === groupId);
 
-      msg += `**${groupName}**\n`;
+      msg += `*--- ${groupName} ---*\n`;
 
       if (rules.length === 0) {
-        msg += `_No conditions configured_\n\n`;
+        msg += `  _No conditions configured_\n\n`;
         continue;
       }
 
@@ -1049,9 +1048,9 @@ verifyHandlers.command('status', async (ctx: Context) => {
       msg += await formatRequirementsMessage(rules, result);
 
       if (result.satisfied || membership?.status === 'authorized') {
-        msg += `✅ _Access granted_\n\n`;
+        msg += `  _Access granted_ 👍\n\n`;
       } else {
-        msg += `⏳ _Requirements not met_\n\n`;
+        msg += `  _Requirements not met_ 👎\n\n`;
       }
     }
 
@@ -1068,12 +1067,12 @@ verifyHandlers.command('status', async (ctx: Context) => {
     }
 
     const group = getGroup(chatId);
-    const groupName = escapeMarkdown(group?.name || 'This group');
+    const groupName = group?.name || 'This group';
     const rules = getAccessRules(chatId);
 
     if (rules.length === 0) {
       try {
-        await ctx.api.sendMessage(userId, `**${groupName}** has no access conditions configured.`, { parse_mode: 'Markdown' });
+        await ctx.api.sendMessage(userId, `*${groupName}* has no access conditions configured.`, { parse_mode: 'Markdown' });
       } catch {
         await ctx.reply('Please start a DM with me first, then try again.');
       }
@@ -1082,7 +1081,7 @@ verifyHandlers.command('status', async (ctx: Context) => {
 
     const verifications = getVerificationsForUser(userId);
 
-    let msg = `📊 **${groupName} status:**\n\n`;
+    let msg = `*${groupName} status:*\n\n`;
 
     if (verifications.length === 0) {
       // User has no verifications
@@ -1096,9 +1095,9 @@ verifyHandlers.command('status', async (ctx: Context) => {
       msg += await formatRequirementsMessage(rules, result);
 
       if (result.satisfied) {
-        msg += `✅ _Access granted_`;
+        msg += `  _Access granted_ 👍`;
       } else {
-        msg += `⏳ _Requirements not met_`;
+        msg += `_Requirements not met_ 👎`;
       }
     }
 

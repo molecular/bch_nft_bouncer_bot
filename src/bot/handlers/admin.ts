@@ -11,7 +11,6 @@ import {
 } from '../../storage/queries.js';
 import { isValidCategoryId } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
-import { escapeMarkdown } from '../utils/format.js';
 import { checkGroupVerifications } from '../../blockchain/monitor.js';
 import type { AccessRule } from '../../storage/types.js';
 
@@ -59,7 +58,7 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
     (configured
       ? 'NFT categories are already configured. Use /groupinfo to view them.'
       : 'Next step: Add NFT categories with /add\\_category <category\\_id>') +
-    `\n\n**Verification link for existing members:**\n${deepLinkEscaped}`,
+    `\n\n*Verification link for existing members:*\n${deepLinkEscaped}`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -74,12 +73,12 @@ adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) =
 
   if (!args) {
     await ctx.reply(
-      '**Usage:**\n\n' +
+      '*Usage:*\n\n' +
       '`/add_condition nft <category> [label] [start] [end]`\n' +
       '  Add NFT requirement with optional commitment range\n\n' +
       '`/add_condition balance <amount> <BCH|category>`\n' +
       '  Add balance requirement (BCH or token)\n\n' +
-      '**Examples:**\n' +
+      '*Examples:*\n' +
       '`/add_condition nft abc123...`\n' +
       '`/add_condition nft abc123... Jessicas 01 64`\n' +
       '`/add_condition balance 21 BCH`\n' +
@@ -150,10 +149,10 @@ adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) =
       const displayName = formatTokenName(category, metadata);
 
       let msg = `✅ NFT condition added (ID: ${ruleId})\n\n`;
-      msg += `**Token:** ${displayName}\n`;
-      if (label) msg += `**Label:** ${label}\n`;
+      msg += `*Token:* ${displayName}\n`;
+      if (label) msg += `*Label:* ${label}\n`;
       if (startCommitment && endCommitment) {
-        msg += `**Range:** \`${startCommitment}\` - \`${endCommitment}\`\n`;
+        msg += `*Range:* \`${startCommitment}\` - \`${endCommitment}\`\n`;
       }
 
       await ctx.reply(msg, { parse_mode: 'Markdown' });
@@ -227,14 +226,14 @@ adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) =
       let msg = `✅ Balance condition added (ID: ${ruleId})\n\n`;
       if (category === 'BCH') {
         const bchDisplay = (Number(minAmount) / 100000000).toFixed(8).replace(/\.?0+$/, '');
-        msg += `**Requirement:** ${bchDisplay} BCH\n`;
+        msg += `*Requirement:* ${bchDisplay} BCH\n`;
       } else {
         const metadata = await fetchTokenMetadata(category);
         const displayName = formatTokenName(category, metadata);
-        msg += `**Token:** ${displayName}\n`;
-        msg += `**Minimum:** ${minAmount}\n`;
+        msg += `*Token:* ${displayName}\n`;
+        msg += `*Minimum:* ${minAmount}\n`;
       }
-      if (autoLabel) msg += `**Label:** ${autoLabel}\n`;
+      if (autoLabel) msg += `*Label:* ${autoLabel}\n`;
 
       await ctx.reply(msg, { parse_mode: 'Markdown' });
     } catch (error: any) {
@@ -283,7 +282,7 @@ adminHandlers.command('list_conditions', async (ctx: Context) => {
   let msg = '*Access Conditions:*\n\n';
 
   if (nftRules.length > 0) {
-    msg += '--- *NFT* _(at least one required)_ ---\n';
+    msg += '  *NFT:* _(at least one required)_\n';
 
     // Fetch metadata for all categories
     const categories = [...new Set(nftRules.map(r => r.category).filter(Boolean))];
@@ -300,24 +299,24 @@ adminHandlers.command('list_conditions', async (ctx: Context) => {
       // Shorten category ID (first 8 + last 4 chars)
       const shortCat = rule.category ? `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}` : '';
 
-      msg += `• *[${rule.id}]* ${rule.label || displayName}\n`;
+      msg += `    • *[${rule.id}]* ${rule.label || displayName}\n`;
       // Show shortened category ID (backticks allow tap-to-copy on mobile)
-      msg += `   Category ID: \`${shortCat}\`\n`;
+      msg += `        Category: \`${shortCat}\`\n`;
       if (rule.start_commitment && rule.end_commitment) {
-        msg += `   Commitment Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
+        msg += `        Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
       }
     }
     msg += '\n';
   }
 
   if (balanceRules.length > 0) {
-    msg += '--- *Balance* _(at least one required)_ ---\n';
+    msg += '  *Balance:* _(at least one required)_\n';
 
     for (const rule of balanceRules) {
       if (rule.category?.toUpperCase() === 'BCH') {
         const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
         const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
-        msg += `• *[${rule.id}]* ${rule.label || `${bchDisplay} BCH`}\n`;
+        msg += `    • *[${rule.id}]* ${rule.label || `${bchDisplay} BCH`}\n`;
       } else {
         const metadata = rule.category ? await fetchTokenMetadata(rule.category) : null;
         const displayName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
@@ -325,12 +324,12 @@ adminHandlers.command('list_conditions', async (ctx: Context) => {
         const shortCat = rule.category ? `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}` : '';
         // Use label if set (which now auto-includes symbol), otherwise show amount + token name
         if (rule.label) {
-          msg += `• *[${rule.id}]* ${rule.label}\n`;
+          msg += `    • *[${rule.id}]* ${rule.label}\n`;
         } else {
-          msg += `• *[${rule.id}]* ${rule.min_amount} ${displayName}\n`;
+          msg += `    • *[${rule.id}]* ${rule.min_amount} ${displayName}\n`;
         }
         // Show shortened category ID (backticks allow tap-to-copy on mobile)
-        msg += `   Category ID: \`${shortCat}\`\n`;
+        msg += `        Category: \`${shortCat}\`\n`;
       }
     }
     msg += '\n';
@@ -480,16 +479,16 @@ adminHandlers.command('groupinfo', requireGroupAdmin, async (ctx: Context) => {
   const balanceRules = rules.filter(r => r.rule_type === 'balance');
   const perms = await checkBotPermissions(ctx);
 
-  let statusMsg = `📊 **Group Status**\n\n`;
-  statusMsg += `**Name:** ${escapeMarkdown(group.name || 'Unknown')}\n`;
-  statusMsg += `**ID:** ${group.id}\n`;
-  statusMsg += `**Set up:** ${group.created_at}\n\n`;
+  let statusMsg = `*Group Status*\n\n`;
+  statusMsg += `*Name:* ${group.name || 'Unknown'}\n`;
+  statusMsg += `*ID:* ${group.id}\n`;
+  statusMsg += `*Set up:* ${group.created_at}\n\n`;
 
-  statusMsg += `**Bot Permissions:**\n`;
-  statusMsg += `• Can kick: ${perms.canKick ? '✅' : '❌'}\n`;
-  statusMsg += `• Can restrict: ${perms.canRestrict ? '✅' : '❌'}\n\n`;
+  statusMsg += `*Bot Permissions:*\n`;
+  statusMsg += `• Can kick: ${perms.canKick ? '■' : '□'}\n`;
+  statusMsg += `• Can restrict: ${perms.canRestrict ? '■' : '□'}\n\n`;
 
-  statusMsg += `**Access Conditions:** ${rules.length} total\n`;
+  statusMsg += `*Access Conditions:* ${rules.length} total\n`;
   if (nftRules.length > 0) {
     statusMsg += `• NFT rules: ${nftRules.length}\n`;
   }
@@ -545,18 +544,18 @@ adminHandlers.command('scan', requireGroupAdmin, async (ctx: Context) => {
 // /help - Show admin help
 adminHandlers.command('adminhelp', requireGroupAdmin, async (ctx: Context) => {
   await ctx.reply(
-    `🔧 **Admin Commands**\n\n` +
-    `**Setup:**\n` +
+    `*Admin Commands*\n\n` +
+    `*--- Setup ---*\n` +
     `/setup - Initialize bot for this group\n` +
     `/groupinfo - Show group configuration summary\n\n` +
-    `**Access Conditions:**\n` +
+    `*--- Access Conditions ---*\n` +
     `/add\\_condition nft <cat> [label] [start] [end] - NFT with optional commitment range\n` +
     `/add\\_condition balance <amount> <BCH|cat> - BCH or token balance\n` +
     `/list\\_conditions - List all access conditions\n` +
     `/remove\\_condition <id or name> - Remove a condition by ID or name\n\n` +
-    `**Management:**\n` +
+    `*--- Management ---*\n` +
     `/scan - Re-check all verified users now\n\n` +
-    `**Access Logic:**\n` +
+    `*--- Access Logic ---*\n` +
     `• NFT rules: OR - satisfy at least one\n` +
     `• Balance rules: OR - satisfy at least one\n` +
     `• Between types: AND - need at least one of each type configured`,
