@@ -1,17 +1,17 @@
 import type { Bot } from 'grammy';
 import { config } from '../config.js';
 import {
-  getExpiredPendingKicks,
-  getPendingKicksToWarn,
-  markPendingKickWarned,
-  deletePendingKick,
+  getExpiredMemberships,
+  getMembershipsToWarn,
+  markMembershipWarned,
+  deleteGroupMembership,
 } from '../storage/queries.js';
 
-export async function checkPendingKickTimeouts(bot: Bot): Promise<void> {
+export async function checkMembershipTimeouts(bot: Bot): Promise<void> {
   const { pendingVerificationTimeoutMinutes, pendingVerificationWarnMinutes } = config;
 
   // 1. Send warnings
-  const toWarn = getPendingKicksToWarn(pendingVerificationWarnMinutes, pendingVerificationTimeoutMinutes);
+  const toWarn = getMembershipsToWarn(pendingVerificationWarnMinutes, pendingVerificationTimeoutMinutes);
   for (const pk of toWarn) {
     try {
       const minsLeft = pendingVerificationTimeoutMinutes - pendingVerificationWarnMinutes;
@@ -20,7 +20,7 @@ export async function checkPendingKickTimeouts(bot: Bot): Promise<void> {
         pk.telegram_user_id,
         `\u26a0\ufe0f You have ${minsLeft} minutes to verify for ${groupName} or you'll be removed. Use /verify to complete verification.`
       );
-      markPendingKickWarned(pk.telegram_user_id, pk.group_id);
+      markMembershipWarned(pk.telegram_user_id, pk.group_id);
       console.log(`Sent warning to user ${pk.telegram_user_id} for group ${pk.group_id}`);
     } catch (err) {
       // User may have blocked the bot or never started a DM
@@ -29,7 +29,7 @@ export async function checkPendingKickTimeouts(bot: Bot): Promise<void> {
   }
 
   // 2. Kick expired users
-  const expired = getExpiredPendingKicks(pendingVerificationTimeoutMinutes);
+  const expired = getExpiredMemberships(pendingVerificationTimeoutMinutes);
   for (const pk of expired) {
     try {
       // Ban then unban = kick but allow rejoin
@@ -45,8 +45,8 @@ export async function checkPendingKickTimeouts(bot: Bot): Promise<void> {
         }
       }
 
-      // Delete pending kick record
-      deletePendingKick(pk.telegram_user_id, pk.group_id);
+      // Delete membership record
+      deleteGroupMembership(pk.telegram_user_id, pk.group_id);
 
       // Notify user via DM
       const groupName = pk.group_name || 'the group';

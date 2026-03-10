@@ -1,3 +1,1 @@
 = BUGS/PROBLEMS/FEATURE REQUESTS
-* check for SQL injection opportunities and fix them if any
-* check for duplicate code, generalization opportunities, code cleanup opportunities

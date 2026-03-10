@@ -299,16 +299,6 @@ export function markMembershipWarned(telegramUserId: number, groupId: number): v
   stmt.run(telegramUserId, groupId);
 }
 
-// Legacy aliases for backwards compatibility during migration
-export const addPendingKick = (userId: number, groupId: number) => addGroupMembership(userId, groupId, 'restricted');
-export const getPendingKick = getGroupMembership;
-export const getPendingKicksForUser = getRestrictedMembershipsForUser;
-export const deletePendingKick = deleteGroupMembership;
-export const updatePendingKickMessageId = updateMembershipMessageId;
-export const getExpiredPendingKicks = getExpiredMemberships;
-export const getPendingKicksToWarn = getMembershipsToWarn;
-export const markPendingKickWarned = markMembershipWarned;
-
 // ============ Monitoring Helpers ============
 
 export function getAllVerifiedAddresses(): string[] {
