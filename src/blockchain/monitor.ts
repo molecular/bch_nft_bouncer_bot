@@ -1,6 +1,6 @@
 import { getProvider } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
-import { sendVerifiedMessage, escapeMarkdown } from '../bot/utils/verification.js';
+import { sendVerifiedMessage, sendRestrictedMessage, escapeMarkdown } from '../bot/utils/verification.js';
 import {
   getVerificationsForUser,
   getVerificationsByAddress,
@@ -252,22 +252,24 @@ async function grantAccess(
       }
     }
 
-    // Send "verified" message to the group (with image if available)
-    try {
-      // Try to get the user's name
-      let username = 'User';
+    // Send "verified" message to the group (skip for admins)
+    if (!isAdmin) {
       try {
-        const member = await botInstance.api.getChatMember(membership.group_id, membership.telegram_user_id);
-        if ('user' in member && member.user) {
-          username = member.user.username ? `@${member.user.username}` : member.user.first_name;
+        // Try to get the user's name
+        let username = 'User';
+        try {
+          const member = await botInstance.api.getChatMember(membership.group_id, membership.telegram_user_id);
+          if ('user' in member && member.user) {
+            username = member.user.username ? `@${member.user.username}` : member.user.first_name;
+          }
+        } catch {
+          // Ignore errors getting user info
         }
-      } catch {
-        // Ignore errors getting user info
-      }
 
-      await sendVerifiedMessage(botInstance.api, membership.group_id, username);
-    } catch {
-      // May fail if bot can't send to the group
+        await sendVerifiedMessage(botInstance.api, membership.group_id, username);
+      } catch {
+        // May fail if bot can't send to the group
+      }
     }
 
     console.log(`[monitor] Granted access to user ${membership.telegram_user_id} in group ${membership.group_id}`);
@@ -282,9 +284,10 @@ async function grantAccess(
       try {
         const chat = await botInstance.api.getChat(membership.group_id);
         if ('username' in chat && chat.username) {
-          groupLink = `\n\nGo to group: https://t.me/${chat.username}`;
+          // Use Markdown link syntax to avoid underscore parsing issues
+          groupLink = `\n\n[Go to ${escapeMarkdown(groupName)}](https://t.me/${chat.username})`;
         } else if ('invite_link' in chat && chat.invite_link) {
-          groupLink = `\n\nGo to group: ${chat.invite_link}`;
+          groupLink = `\n\n[Go to ${escapeMarkdown(groupName)}](${chat.invite_link})`;
         }
       } catch {
         // Ignore errors getting chat info
@@ -509,10 +512,7 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
       if ('user' in member && member.user) {
         username = member.user.username ? `@${member.user.username}` : member.user.first_name;
       }
-      await botInstance.api.sendMessage(
-        membership.group_id,
-        `🚫 ${username} restricted (no longer meets requirements)`,
-      );
+      await sendRestrictedMessage(botInstance.api, membership.group_id, username);
     } catch {
       // May fail if bot can't send to the group
     }
@@ -525,7 +525,7 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
         membership.telegram_user_id,
         `⚠️ Your wallet no longer meets the access requirements for *${escapeMarkdown(groupName)}*.\n\n` +
         `You've been restricted until you meet the requirements again.\n\n` +
-        `I'm still monitoring your address - you'll be automatically re-activated!`,
+        `I'm still monitoring your address - you'll be automatically re-activated once conditions are met again!`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {

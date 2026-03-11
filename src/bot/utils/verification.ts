@@ -25,5 +25,16 @@ export async function sendVerifiedMessage(
   groupId: number,
   username: string
 ): Promise<void> {
-  await api.sendMessage(groupId, `✅ ${username} verified!`);
+  await api.sendMessage(groupId, `👍 ${username} verified!`);
+}
+
+/**
+ * Send a simple "restricted" message to a group.
+ */
+export async function sendRestrictedMessage(
+  api: Api,
+  groupId: number,
+  username: string
+): Promise<void> {
+  await api.sendMessage(groupId, `👎 ${username} restricted`);
 }

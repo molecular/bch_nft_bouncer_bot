@@ -253,11 +253,17 @@ export async function formatRequirementsMessage(
       const satisfied = ruleResult?.satisfied ?? false;
       const icon = satisfied ? '■' : '□';
       const metadata = rule.category ? metadataMap.get(rule.category) : null;
-      const displayName = rule.label || (rule.category ? formatTokenName(rule.category, metadata) : 'Unknown');
+      const tokenName = rule.category ? formatTokenName(rule.category, metadata) : null;
       // Shorten category ID (first 8 + last 4 chars)
       const shortCat = rule.category ? `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}` : '';
 
+      // Show label as primary name if set, otherwise token name
+      const displayName = rule.label || tokenName || 'Unknown';
       msg += `    ${icon} ${displayName}\n`;
+      // Always show token name from BCMR if we have one (and it's not already shown)
+      if (tokenName && rule.label) {
+        msg += `        ${tokenName}\n`;
+      }
       msg += `        Category: \`${shortCat}\`\n`;
       if (rule.start_commitment !== null && rule.end_commitment !== null) {
         msg += `        Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
@@ -276,20 +282,30 @@ export async function formatRequirementsMessage(
       const isBch = rule.category?.toUpperCase() === 'BCH';
 
       let displayName: string;
-      if (rule.label) {
-        // Label already includes amount info
-        displayName = rule.label;
-      } else if (isBch) {
+      let tokenInfo: string | null = null;
+
+      if (isBch) {
         const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
         const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
-        displayName = `${bchDisplay} BCH`;
+        tokenInfo = `${bchDisplay} BCH`;
+      } else if (rule.category) {
+        const metadata = await fetchTokenMetadata(rule.category);
+        const tokenName = formatTokenName(rule.category, metadata);
+        tokenInfo = `${rule.min_amount} ${tokenName}`;
+      }
+
+      if (rule.label) {
+        displayName = rule.label;
       } else {
-        const metadata = rule.category ? await fetchTokenMetadata(rule.category) : null;
-        const tokenName = rule.category ? formatTokenName(rule.category, metadata) : 'Unknown';
-        displayName = `${rule.min_amount} ${tokenName}`;
+        displayName = tokenInfo || 'Unknown';
+        tokenInfo = null; // Don't show twice
       }
 
       msg += `    ${icon} ${displayName}\n`;
+      // Show token info if we have a label (so user sees both)
+      if (tokenInfo && rule.label) {
+        msg += `        ${tokenInfo}\n`;
+      }
       // Show category ID for fungible tokens (not BCH)
       if (!isBch && rule.category) {
         const shortCat = `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}`;
