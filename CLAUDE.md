@@ -38,3 +38,13 @@ No automated tests. Telegram bots are difficult to test automatically (can't cre
 - Track items pending test in [TODO](./TODO)
 
 When implementing features, consider what needs to be tested together and batch changes accordingly.
+
+## Refactoring Guidelines
+
+When refactoring code, be careful not to remove functionality you don't fully understand:
+
+- **Preserve function calls when rewriting lines.** If changing `**bold**` to `*bold*`, don't rewrite the whole line - just change what needs changing. A line like `\`${escapeMarkdown(name)}\`` should keep the `escapeMarkdown()` call even if you're modifying surrounding syntax.
+
+- **Understand why utilities exist before removing them.** If a utility function escapes characters for Markdown, it's protecting against user input (group names, usernames) breaking the message - not related to the message's own formatting syntax.
+
+- **User input vs message syntax are separate concerns.** `escapeMarkdown(groupName)` handles characters in `groupName` (user data). The `*bold*` syntax around it is message formatting. Changing one doesn't affect the need for the other.
