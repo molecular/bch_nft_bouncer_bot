@@ -1,6 +1,6 @@
 import { getProvider } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
-import { sendVerifiedMessage } from '../bot/utils/verification.js';
+import { sendVerifiedMessage, escapeMarkdown } from '../bot/utils/verification.js';
 import {
   getVerificationsForUser,
   getVerificationsByAddress,
@@ -294,7 +294,7 @@ async function grantAccess(
         membership.telegram_user_id,
         `🎉 *Great news!*\n\n` +
         `Your wallet now meets the access requirements!\n\n` +
-        `You now have full access to *${groupName}*.${groupLink}`,
+        `You now have full access to *${escapeMarkdown(groupName)}*.${groupLink}`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {
@@ -323,7 +323,7 @@ async function notifyConditionProgress(
     const group = getGroup(membership.group_id);
     const groupName = group?.name || `Group ${membership.group_id}`;
 
-    let msg = `*Condition Status for ${groupName}*\n\n`;
+    let msg = `*Condition Status for ${escapeMarkdown(groupName)}*\n\n`;
     msg += await formatRequirementsMessage(rules, result);
 
     // Add status summary
@@ -475,19 +475,21 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
   }
 
   try {
-    // Check if user is admin/creator - don't restrict them
+    // Check if user is admin/creator - don't restrict them but still track status
     const member = await botInstance.api.getChatMember(
       membership.group_id,
       membership.telegram_user_id
     );
 
-    if (member.status === 'administrator' || member.status === 'creator') {
-      console.log(`User ${membership.telegram_user_id} is admin/creator - not restricting`);
-      return;
-    }
+    const isAdmin = member.status === 'administrator' || member.status === 'creator';
 
     // Update membership status to restricted
     setMembershipStatus(membership.telegram_user_id, membership.group_id, 'restricted');
+
+    if (isAdmin) {
+      console.log(`User ${membership.telegram_user_id} is admin/creator - status updated but not restricting`);
+      return;
+    }
 
     // Restrict the user
     try {
@@ -521,7 +523,7 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
       const groupName = group?.name || `Group ${membership.group_id}`;
       await botInstance.api.sendMessage(
         membership.telegram_user_id,
-        `⚠️ Your wallet no longer meets the access requirements for *${groupName}*.\n\n` +
+        `⚠️ Your wallet no longer meets the access requirements for *${escapeMarkdown(groupName)}*.\n\n` +
         `You've been restricted until you meet the requirements again.\n\n` +
         `I'm still monitoring your address - you'll be automatically re-activated!`,
         { parse_mode: 'Markdown' }

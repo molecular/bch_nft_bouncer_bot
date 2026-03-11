@@ -24,7 +24,7 @@ import {
 } from '../../storage/queries.js';
 import { checkNftOwnership, isValidCategoryId, checkAccessRules, checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
 import { fetchTokenMetadata, formatTokenName, formatNftDisplay } from '../../blockchain/bcmr.js';
-import { sendVerifiedMessage } from '../utils/verification.js';
+import { sendVerifiedMessage, escapeMarkdown } from '../utils/verification.js';
 import { verifySignedMessage, generateChallengeMessage, isValidBchAddress } from '../../blockchain/verify.js';
 import { createPairing, getUserSession, disconnectSession, checkAndClearRejection } from '../../walletconnect/session.js';
 import { generateQRBuffer } from '../../walletconnect/qr.js';
@@ -168,7 +168,7 @@ async function startVerification(ctx: Context, userId: number, groupId: number):
   });
 
   // Build the verification message
-  let msg = `*Verification for ${group.name || 'Unknown Group'}*\n\n`;
+  let msg = `*Verification for ${escapeMarkdown(group.name || 'Unknown Group')}*\n\n`;
 
   // Show existing verifications if any
   if (existingVerifications.length > 0) {
@@ -254,12 +254,14 @@ export async function formatRequirementsMessage(
       const icon = satisfied ? '■' : '□';
       const metadata = rule.category ? metadataMap.get(rule.category) : null;
       const displayName = rule.label || (rule.category ? formatTokenName(rule.category, metadata) : 'Unknown');
+      // Shorten category ID (first 8 + last 4 chars)
+      const shortCat = rule.category ? `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}` : '';
 
-      msg += `    ${icon} ${displayName}`;
-      if (rule.start_commitment && rule.end_commitment) {
-        msg += ` (${rule.start_commitment}-${rule.end_commitment})`;
+      msg += `    ${icon} ${displayName}\n`;
+      msg += `        Category: \`${shortCat}\`\n`;
+      if (rule.start_commitment !== null && rule.end_commitment !== null) {
+        msg += `        Range: \`${rule.start_commitment}\` - \`${rule.end_commitment}\`\n`;
       }
-      msg += `\n`;
     }
     msg += '\n';
   }
@@ -271,12 +273,13 @@ export async function formatRequirementsMessage(
       const ruleResult = checkResult?.balanceResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
       const icon = satisfied ? '■' : '□';
+      const isBch = rule.category?.toUpperCase() === 'BCH';
 
       let displayName: string;
       if (rule.label) {
         // Label already includes amount info
         displayName = rule.label;
-      } else if (rule.category?.toUpperCase() === 'BCH') {
+      } else if (isBch) {
         const bchAmount = Number(BigInt(rule.min_amount || '0')) / 100000000;
         const bchDisplay = bchAmount.toFixed(8).replace(/\.?0+$/, '');
         displayName = `${bchDisplay} BCH`;
@@ -287,6 +290,11 @@ export async function formatRequirementsMessage(
       }
 
       msg += `    ${icon} ${displayName}\n`;
+      // Show category ID for fungible tokens (not BCH)
+      if (!isBch && rule.category) {
+        const shortCat = `${rule.category.slice(0, 8)}...${rule.category.slice(-4)}`;
+        msg += `        Category: \`${shortCat}\`\n`;
+      }
     }
     msg += '\n';
   }
@@ -687,7 +695,7 @@ async function handleWcVerification(
             } else if (!result2.nftSatisfied && result2.balanceSatisfied) {
               msg += `_Balance requirement satisfied! Still need an NFT condition._\n\n`;
             } else {
-              msg += `_Still need requirements - verify another address._\n\n`;
+              msg += `_Still need requirements - verify another address or add funds/nfts to a verified address._\n\n`;
             }
 
             msg += `Prove another address via /wc or paste address, or /cancel.`;
@@ -1037,7 +1045,7 @@ verifyHandlers.command('status', async (ctx: Context) => {
       const rules = getAccessRules(groupId);
       const membership = memberships.find(m => m.group_id === groupId);
 
-      msg += `*--- ${groupName} ---*\n`;
+      msg += `*--- ${escapeMarkdown(groupName)} ---*\n\n`;
 
       if (rules.length === 0) {
         msg += `  _No conditions configured_\n\n`;
@@ -1072,7 +1080,7 @@ verifyHandlers.command('status', async (ctx: Context) => {
 
     if (rules.length === 0) {
       try {
-        await ctx.api.sendMessage(userId, `*${groupName}* has no access conditions configured.`, { parse_mode: 'Markdown' });
+        await ctx.api.sendMessage(userId, `*${escapeMarkdown(groupName)}* has no access conditions configured.`, { parse_mode: 'Markdown' });
       } catch {
         await ctx.reply('Please start a DM with me first, then try again.');
       }
@@ -1081,7 +1089,7 @@ verifyHandlers.command('status', async (ctx: Context) => {
 
     const verifications = getVerificationsForUser(userId);
 
-    let msg = `*${groupName} status:*\n\n`;
+    let msg = `*${escapeMarkdown(groupName)} status:*\n\n`;
 
     if (verifications.length === 0) {
       // User has no verifications
@@ -1223,13 +1231,20 @@ async function addUserToGroup(
   userId: number,
   groupId: number
 ): Promise<void> {
-  console.log(`[addUserToGroup] Unrestricting user ${userId} in group ${groupId}`);
+  console.log(`[addUserToGroup] Granting access to user ${userId} in group ${groupId}`);
   try {
     // Get membership info before updating (we need the prompt_message_id)
     const membership = getGroupMembership(userId, groupId);
 
+    // Update or create membership record as authorized
+    if (membership) {
+      setMembershipStatus(userId, groupId, 'authorized');
+    } else {
+      addGroupMembership(userId, groupId, 'authorized');
+    }
+
     await unrestrictUser(ctx.api, groupId, userId);
-    console.log(`[addUserToGroup] Successfully unrestricted user ${userId}`);
+    console.log(`[addUserToGroup] Successfully granted access to user ${userId}`);
 
     // Delete the verification prompt message from the group if we have the message ID
     if (membership?.prompt_message_id) {

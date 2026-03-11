@@ -47,10 +47,8 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     return;
   }
 
-  // Ignore admins/owners
-  if (new_chat_member.status === 'administrator' || new_chat_member.status === 'creator') {
-    return;
-  }
+  // Check if user is admin/owner (they're exempt from restrictions but we still track them)
+  const isAdmin = new_chat_member.status === 'administrator' || new_chat_member.status === 'creator';
 
   // Check if this group is managed by the bot
   const group = getGroup(chatId);
@@ -65,13 +63,15 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   const rules = getAccessRules(chatId);
 
   if (membership?.status === 'authorized') {
-    // User is already authorized - ensure unrestricted
-    console.log(`User ${userId} authorized for group ${chatId}, ensuring unrestricted`);
-    try {
-      await unrestrictUser(ctx.api, chatId, userId);
-      console.log(`User ${userId} unrestricted on rejoin`);
-    } catch (error: any) {
-      console.error(`Failed to unrestrict authorized user ${userId}:`, error.message);
+    // User is already authorized - ensure unrestricted (skip for admins)
+    if (!isAdmin) {
+      console.log(`User ${userId} authorized for group ${chatId}, ensuring unrestricted`);
+      try {
+        await unrestrictUser(ctx.api, chatId, userId);
+        console.log(`User ${userId} unrestricted on rejoin`);
+      } catch (error: any) {
+        console.error(`Failed to unrestrict authorized user ${userId}:`, error.message);
+      }
     }
     return;
   }
@@ -87,13 +87,15 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   if (verifications.length > 0) {
     const result = await checkAccessRulesMultiAddress(userAddresses, rules);
     if (result.satisfied) {
-      // User qualifies - add as authorized and unrestrict
+      // User qualifies - add as authorized and unrestrict (skip unrestrict for admins)
       console.log(`User ${userId} verifications qualify for group ${chatId}, granting access`);
       addGroupMembership(userId, chatId, 'authorized');
-      try {
-        await unrestrictUser(ctx.api, chatId, userId);
-      } catch (error: any) {
-        console.error(`Failed to unrestrict qualifying user ${userId}:`, error.message);
+      if (!isAdmin) {
+        try {
+          await unrestrictUser(ctx.api, chatId, userId);
+        } catch (error: any) {
+          console.error(`Failed to unrestrict qualifying user ${userId}:`, error.message);
+        }
       }
       return;
     }
@@ -102,6 +104,13 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   // Check if we've already tracked this user (avoid duplicate prompts)
   if (membership) {
     console.log(`User ${userId} already has membership record (status: ${membership.status}), skipping prompt`);
+    return;
+  }
+
+  // Admins get tracked as authorized without needing to verify
+  if (isAdmin) {
+    console.log(`Admin ${userId} joined group ${chatId}, tracking as authorized`);
+    addGroupMembership(userId, chatId, 'authorized');
     return;
   }
 

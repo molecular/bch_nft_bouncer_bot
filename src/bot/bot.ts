@@ -41,8 +41,13 @@ export function createBot(): Bot {
       );
     } else {
       await ctx.reply(
-        `Use /adminhelp for admin commands.\n` +
-        `For verification, message me directly.`
+        `*User Commands:*\n` +
+        `/verify - Verify your wallet\n` +
+        `/status - Check your access status\n` +
+        `/list\\_conditions - View access requirements\n\n` +
+        `*Admin Commands:*\n` +
+        `/adminhelp - Setup and configuration`,
+        { parse_mode: 'Markdown' }
       );
     }
   });
