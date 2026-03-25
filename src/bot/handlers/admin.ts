@@ -486,8 +486,8 @@ adminHandlers.command('groupinfo', requireGroupAdmin, async (ctx: Context) => {
   statusMsg += `*Set up:* ${group.created_at}\n\n`;
 
   statusMsg += `*Bot Permissions:*\n`;
-  statusMsg += `• Can kick: ${perms.canKick ? '■' : '□'}\n`;
-  statusMsg += `• Can restrict: ${perms.canRestrict ? '■' : '□'}\n\n`;
+  statusMsg += `• Can kick: ${perms.canKick ? '✓' : '✗'}\n`;
+  statusMsg += `• Can restrict: ${perms.canRestrict ? '✓' : '✗'}\n\n`;
 
   statusMsg += `*Access Conditions:* ${rules.length} total\n`;
   if (nftRules.length > 0) {

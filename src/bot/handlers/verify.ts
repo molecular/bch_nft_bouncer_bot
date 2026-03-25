@@ -251,7 +251,7 @@ export async function formatRequirementsMessage(
     for (const rule of nftRules) {
       const ruleResult = checkResult?.nftResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
-      const icon = satisfied ? '■' : '□';
+      const icon = satisfied ? '✓' : '○';
       const metadata = rule.category ? metadataMap.get(rule.category) : null;
       const tokenName = rule.category ? formatTokenName(rule.category, metadata) : null;
       // Shorten category ID (first 8 + last 4 chars)
@@ -278,7 +278,7 @@ export async function formatRequirementsMessage(
     for (const rule of balanceRules) {
       const ruleResult = checkResult?.balanceResults.find(r => r.rule.id === rule.id);
       const satisfied = ruleResult?.satisfied ?? false;
-      const icon = satisfied ? '■' : '□';
+      const icon = satisfied ? '✓' : '○';
       const isBch = rule.category?.toUpperCase() === 'BCH';
 
       let displayName: string;
