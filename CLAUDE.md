@@ -12,20 +12,43 @@ Project-specific notes for Claude Code sessions.
 
 **Keep these files updated with any code changes.** When implementing features or fixing bugs, update the relevant documentation (mark phases complete in PLAN.md, add/remove items in TODO, document new quirks, etc.).
 
-## Restarting the Bot
+## Environments
 
-The bot runs in a screen session named `nftbouncer` that runs `run.sh`.
+### Development (Pi)
+- **Location**: `/home/pi/nft_entry_bot/` on `pi@four`
+- **Bot**: Dev bot (existing test bot)
+- **Screen session**: `nftbouncer`
+- **Restart**: `screen -S nftbouncer -X stuff $'\003'`
+- **Logs**: `tail -f bot.log`
 
-To restart:
+### Production (nil)
+- **Location**: `/home/pi/nft_entry_bot/` on `pi@nil`
+- **Bot**: Steve (`@steve_bouncer_bot`)
+- **Screen session**: `nftbouncer`
+- **SSH**: `ssh nil` (key-based auth configured)
+
+**Convenience scripts on nil** (in `~/bin`):
+- `steve_logs` - tail production logs
+- `steve_deploy` - git pull, build, restart
+- `steve_restart` - just restart
+
+**From Pi:**
 ```bash
-screen -S nftbouncer -X stuff $'\003'
+ssh nil 'steve_logs'      # View logs
+ssh nil 'steve_deploy'    # Deploy changes
+ssh nil 'steve_restart'   # Restart only
 ```
 
-This sends Ctrl-C to the screen session, which stops the current process. The screen session has a loop or script that restarts `npm run dev` automatically.
+## Deployment Workflow
+
+1. Develop and test on Pi with dev bot
+2. Commit and push: `git add . && git commit && git push`
+3. Deploy to production: `ssh nil 'steve_deploy'`
+4. Verify: `ssh nil 'steve_logs'`
 
 ## Viewing bot output (for testing)
 
-run.sh logs to `bot.log`, which can be `tail`ed to see output.
+run_nftbouncer.sh logs to `bot.log`, which can be `tail`ed to see output.
 
 ## Testing Methodology
 
