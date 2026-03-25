@@ -77,10 +77,11 @@ Access rules determine who can join your group:
 
 1. **Join the group** - You'll receive a verification prompt
 2. **Click the verification link** to start a DM with the bot
-3. **Choose verification method**:
-   - **WalletConnect** (recommended): Send `/wc`, scan the QR code with your BCH wallet
-   - **Manual**: Send your BCH address, sign the challenge message, paste the signature
-4. **Multi-address support**: If your assets are spread across multiple wallets, you can verify additional addresses to meet all requirements
+3. **Scan the QR code** with your BCH wallet (Paytaca, Cashonize, etc.)
+   - The bot shows your requirements and a WalletConnect QR code automatically
+   - Approve the connection and signature request in your wallet
+   - *Alternative*: Send your BCH address manually for signature-based verification
+4. **Multi-address support**: If your assets are spread across multiple wallets, use `/wc` to verify additional addresses
 5. **Done!** You'll have full access to the group
 
 ### User Commands
@@ -88,7 +89,7 @@ Access rules determine who can join your group:
 | Command | Description |
 |---------|-------------|
 | `/verify` | Start or continue verification |
-| `/wc` | Connect wallet via WalletConnect QR code |
+| `/wc` | Get a new QR code (for retries or additional addresses) |
 | `/sign` | Resend signature request (after rejection) |
 | `/status` | Check your condition fulfillment status |
 | `/list_verifications` | Show your verified addresses |
