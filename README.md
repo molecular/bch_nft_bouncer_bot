@@ -6,9 +6,9 @@ A Telegram bot that gates group access based on Bitcoin Cash NFT (CashToken) own
 
 **You don't need to run your own instance!** Group owners can use the public bot:
 
-**[@bch_nft_bouncer_bot](https://t.me/bch_nft_bouncer_bot)**
+**[@steve_bouncer_bot](https://t.me/steve_bouncer_bot)**
 
-Just add it to your group and configure your NFT categories.
+Just add it to your group and configure your access conditions.
 
 ---
 
@@ -22,9 +22,8 @@ Just add it to your group and configure your NFT categories.
    - **Ban users** - to kick users who no longer hold NFTs
    - **Add new admins** - to unrestrict verified users (uses promote/demote cycle)
 3. **Run `/setup`** in your group to initialize
-4. **Add NFT categories** with `/add_category <category_id>`
-   - The category ID is the 64-character hex transaction ID of the NFT genesis
-   - Example: `/add_category 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`
+4. **Add access conditions** with `/add_condition`
+   - See examples below or use `/adminhelp` for full syntax
 
 ### Admin Commands
 
@@ -32,17 +31,12 @@ Just add it to your group and configure your NFT categories.
 |---------|-------------|
 | `/setup` | Initialize the bot for your group |
 | `/add_condition nft <cat> [label] [start] [end]` | Add NFT requirement with optional commitment range |
-| `/add_condition balance <cat\|BCH> <amount> [label]` | Add token or BCH balance requirement |
+| `/add_condition balance <amount> <BCH\|cat>` | Add token or BCH balance requirement |
 | `/list_conditions` | List all access conditions with IDs |
 | `/remove_condition <id>` | Remove a condition by ID |
 | `/groupinfo` | Show group configuration and bot permissions |
 | `/scan` | Re-check all verified members |
 | `/adminhelp` | Show admin command help |
-
-**Legacy commands** (still work):
-- `/add_category <id>` - Add NFT category (no commitment range)
-- `/remove_category <id>` - Remove NFT category
-- `/list_categories` - List NFT categories
 
 ### Access Rules
 
