@@ -57,8 +57,8 @@ adminHandlers.command('setup', requireGroupAdmin, async (ctx: Context) => {
     `Group: ${chatTitle}\n` +
     `ID: ${chatId}\n\n` +
     (configured
-      ? 'NFT categories are already configured. Use /groupinfo to view them.'
-      : 'Next step: Add NFT categories with /add\\_category <category\\_id>') +
+      ? 'Access conditions configured. Use /list\\_conditions to view.'
+      : 'Next step: Add access conditions with /add\\_condition') +
     `\n\n*Verification link for existing members:*\n${deepLinkEscaped}`,
     { parse_mode: 'Markdown' }
   );
