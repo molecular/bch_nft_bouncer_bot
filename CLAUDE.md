@@ -32,19 +32,19 @@ Project-specific notes for Claude Code sessions.
 - `steve_deploy` - git pull, build, restart
 - `steve_restart` - just restart
 
-**From Pi:**
+**From Pi** (use `bash ~/bin/...` since non-interactive SSH doesn't load PATH):
 ```bash
-ssh nil 'steve_logs'      # View logs
-ssh nil 'steve_deploy'    # Deploy changes
-ssh nil 'steve_restart'   # Restart only
+ssh nil 'bash ~/bin/steve_logs'      # View logs
+ssh nil 'bash ~/bin/steve_deploy'    # Deploy changes
+ssh nil 'bash ~/bin/steve_restart'   # Restart only
 ```
 
 ## Deployment Workflow
 
 1. Develop and test on Pi with dev bot
 2. Commit and push: `git add . && git commit && git push`
-3. Deploy to production: `ssh nil 'steve_deploy'`
-4. Verify: `ssh nil 'steve_logs'`
+3. Deploy to production: `ssh nil 'bash ~/bin/steve_deploy'`
+4. Verify: `ssh nil 'bash ~/bin/steve_logs'`
 
 ## Viewing bot output (for testing)
 
