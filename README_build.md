@@ -117,15 +117,20 @@ src/
 ├── polyfills.ts          # Node.js crypto polyfill for WalletConnect
 ├── bot/
 │   ├── bot.ts            # grammY bot setup
+│   ├── timeouts.ts       # Membership timeout checks
 │   ├── handlers/
 │   │   ├── join.ts       # Member join handling
 │   │   ├── verify.ts     # Verification flow
 │   │   └── admin.ts      # Admin commands
-│   └── middleware/
-│       └── auth.ts       # Admin auth middleware
+│   ├── middleware/
+│   │   └── auth.ts       # Admin auth middleware
+│   └── utils/
+│       ├── permissions.ts  # User permission helpers
+│       └── verification.ts # Shared verification utilities
 ├── blockchain/
 │   ├── wallet.ts         # Electrum connection
 │   ├── nft.ts            # NFT ownership checks
+│   ├── bcmr.ts           # BCMR token metadata
 │   ├── monitor.ts        # Transfer monitoring
 │   └── verify.ts         # Signature verification
 ├── walletconnect/
@@ -147,7 +152,7 @@ Tables:
 - `group_access_rules` - Access conditions (NFT requirements, balance thresholds)
 - `verifications` - Verified user addresses (proves ownership, access computed dynamically)
 - `challenges` - Pending verification challenges
-- `pending_kicks` - Users currently restricted (awaiting verification or conditions not met)
+- `group_memberships` - Tracks user membership status per group ('restricted' or 'authorized')
 - `token_metadata` - Cached BCMR token metadata
 
 ## Tech Stack

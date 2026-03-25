@@ -100,6 +100,7 @@ Access rules determine who can join your group:
 | `/list_verifications` | Show your verified addresses |
 | `/unverify <id>` | Remove a verified address |
 | `/cancel` | Cancel current verification |
+| `/help` | Show available commands |
 
 ### Supported Wallets
 
