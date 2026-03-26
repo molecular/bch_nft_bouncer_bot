@@ -470,11 +470,15 @@ async function checkAllVerifications(): Promise<void> {
 
 /**
  * Revoke access when user no longer meets conditions
+ * Returns the username if successfully restricted (for batched notifications)
  */
-async function revokeAccess(membership: GroupMembership): Promise<void> {
+async function revokeAccess(
+  membership: GroupMembership,
+  options?: { skipGroupMessage?: boolean }
+): Promise<string | null> {
   if (!botInstance) {
     console.error('Bot instance not available for revoking access');
-    return;
+    return null;
   }
 
   try {
@@ -491,7 +495,13 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
 
     if (isAdmin) {
       console.log(`User ${membership.telegram_user_id} is admin/creator - status updated but not restricting`);
-      return;
+      return null;
+    }
+
+    // Get username for return value
+    let username = 'User';
+    if ('user' in member && member.user) {
+      username = member.user.username ? `@${member.user.username}` : member.user.first_name;
     }
 
     // Restrict the user
@@ -506,15 +516,13 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
       console.error('Could not restrict user:', restrictError);
     }
 
-    // Send "restricted" message to the group
-    try {
-      let username = 'User';
-      if ('user' in member && member.user) {
-        username = member.user.username ? `@${member.user.username}` : member.user.first_name;
+    // Send "restricted" message to the group (unless batching)
+    if (!options?.skipGroupMessage) {
+      try {
+        await sendRestrictedMessage(botInstance.api, membership.group_id, username);
+      } catch {
+        // May fail if bot can't send to the group
       }
-      await sendRestrictedMessage(botInstance.api, membership.group_id, username);
-    } catch {
-      // May fail if bot can't send to the group
     }
 
     // Notify the user
@@ -532,8 +540,11 @@ async function revokeAccess(membership: GroupMembership): Promise<void> {
       console.log('Could not DM user about restriction:', dmError);
     }
 
+    return username;
+
   } catch (error) {
     console.error(`Error revoking access for user ${membership.telegram_user_id}:`, error);
+    return null;
   }
 }
 
@@ -574,6 +585,7 @@ export async function checkGroupVerifications(groupId: number): Promise<{
 
   let valid = 0;
   let invalid = 0;
+  const restrictedUsernames: string[] = [];
 
   for (const membership of memberships) {
     try {
@@ -581,7 +593,8 @@ export async function checkGroupVerifications(groupId: number): Promise<{
       if (rules.length === 0) {
         if (membership.status === 'authorized') {
           invalid++;
-          await revokeAccess(membership);
+          const username = await revokeAccess(membership, { skipGroupMessage: true });
+          if (username) restrictedUsernames.push(username);
         }
         continue;
       }
@@ -597,7 +610,8 @@ export async function checkGroupVerifications(groupId: number): Promise<{
       if (!result.satisfied && !isRestricted) {
         invalid++;
         console.log(`[monitor] Group check: user ${membership.telegram_user_id} no longer qualifies - will restrict`);
-        await revokeAccess(membership);
+        const username = await revokeAccess(membership, { skipGroupMessage: true });
+        if (username) restrictedUsernames.push(username);
       } else if (result.satisfied && isRestricted) {
         valid++;
         await grantAccess(membership, result);
@@ -606,6 +620,28 @@ export async function checkGroupVerifications(groupId: number): Promise<{
       }
     } catch (error) {
       console.error(`[monitor] Error checking membership for user ${membership.telegram_user_id}:`, error);
+    }
+  }
+
+  // Send batched group notification if any users were restricted
+  if (restrictedUsernames.length > 0 && botInstance) {
+    try {
+      const botUsername = botInstance.botInfo.username;
+      const verifyLink = `https://t.me/${botUsername}?start=verify_${groupId}`;
+
+      let msg: string;
+      if (restrictedUsernames.length === 1) {
+        msg = `👎 ${restrictedUsernames[0]} no longer meets requirements and has been restricted.\n\n` +
+              `Verify again: ${verifyLink}`;
+      } else {
+        msg = `👎 ${restrictedUsernames.length} users no longer meet requirements and have been restricted:\n` +
+              restrictedUsernames.join(', ') + `\n\n` +
+              `Verify again: ${verifyLink}`;
+      }
+
+      await botInstance.api.sendMessage(groupId, msg);
+    } catch {
+      // May fail if bot can't send to the group
     }
   }
 
