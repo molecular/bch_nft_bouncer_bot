@@ -103,6 +103,12 @@ adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) =
   const parts = args.split(/\s+/);
   const ruleType = parts[0]?.toLowerCase();
 
+  // Check existing rules BEFORE adding - we need to scan if this introduces a new rule type
+  const existingRules = getAccessRules(chatId!);
+  const hadNoRules = existingRules.length === 0;
+  const hadNftRules = existingRules.some(r => r.rule_type === 'nft');
+  const hadBalanceRules = existingRules.some(r => r.rule_type === 'balance');
+
   if (ruleType === 'nft') {
     // /add_condition nft <category> [label] [start] [end]
     if (parts.length < 2) {
@@ -157,6 +163,20 @@ adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) =
       }
 
       await ctx.reply(msg, { parse_mode: 'Markdown' });
+
+      // Check if this makes requirements stricter (first rule ever, or first NFT when balance existed)
+      const needsScan = hadNoRules || (!hadNftRules && hadBalanceRules);
+      if (needsScan) {
+        await ctx.reply('🔍 Checking existing members against new requirements...');
+        const result = await checkGroupVerifications(chatId!);
+        if (result.checked > 0) {
+          let scanMsg = `Verification check complete:\n`;
+          scanMsg += `• Checked: ${result.checked}\n`;
+          scanMsg += `• Valid: ${result.valid}\n`;
+          if (result.invalid > 0) scanMsg += `• Restricted (no longer qualify): ${result.invalid}`;
+          await ctx.reply(scanMsg);
+        }
+      }
     } catch (error: any) {
       if (error.message?.includes('UNIQUE constraint')) {
         await ctx.reply('This condition already exists.');
@@ -237,6 +257,20 @@ adminHandlers.command('add_condition', requireGroupAdmin, async (ctx: Context) =
       if (autoLabel) msg += `*Label:* ${autoLabel}\n`;
 
       await ctx.reply(msg, { parse_mode: 'Markdown' });
+
+      // Check if this makes requirements stricter (first rule ever, or first balance when NFT existed)
+      const needsScan = hadNoRules || (!hadBalanceRules && hadNftRules);
+      if (needsScan) {
+        await ctx.reply('🔍 Checking existing members against new requirements...');
+        const result = await checkGroupVerifications(chatId!);
+        if (result.checked > 0) {
+          let scanMsg = `Verification check complete:\n`;
+          scanMsg += `• Checked: ${result.checked}\n`;
+          scanMsg += `• Valid: ${result.valid}\n`;
+          if (result.invalid > 0) scanMsg += `• Restricted (no longer qualify): ${result.invalid}`;
+          await ctx.reply(scanMsg);
+        }
+      }
     } catch (error: any) {
       if (error.message?.includes('UNIQUE constraint')) {
         await ctx.reply('This condition already exists.');
