@@ -69,6 +69,16 @@ Access rules determine who can join your group:
    - Users are notified of condition status changes via DM
    - Access is granted/revoked automatically as conditions are met/unmet
 
+### Admin Exemption
+
+Group administrators and the group creator are **automatically exempt** from verification:
+
+- Admins are never restricted or prompted to verify
+- Admins can post freely without proving NFT ownership
+- This allows group owners and moderators to manage the group without needing qualifying assets
+
+If an admin's status is later removed, they become subject to normal verification rules.
+
 ---
 
 ## For Users
