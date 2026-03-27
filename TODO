@@ -1,15 +1,2 @@
 = BUGS/PROBLEMS/FEATURE REQUESTS
 
-== Race condition: duplicate "verified!" messages
-
-When a user has multiple verified addresses and they all receive Electrum
-subscription callbacks at once (e.g., same block), each callback independently
-checks conditions and grants access, resulting in multiple "verified!" messages
-in the group.
-
-Observed: @kzKallisti verified two addresses, both got activity events
-simultaneously, resulted in two "[monitor] Granted access to user X" entries
-and two "verified!" messages in the group.
-
-Fix: Check membership status before granting - skip if already authorized.
-

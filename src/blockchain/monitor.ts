@@ -222,6 +222,14 @@ async function grantAccess(
     return;
   }
 
+  // Re-check membership status to avoid race condition with concurrent callbacks
+  // (e.g., user has multiple verified addresses that all get activity events at once)
+  const currentMembership = getGroupMembership(membership.telegram_user_id, membership.group_id);
+  if (currentMembership?.status === 'authorized') {
+    console.log(`[monitor] User ${membership.telegram_user_id} already authorized, skipping duplicate grant`);
+    return;
+  }
+
   try {
     // Update membership status to authorized
     setMembershipStatus(membership.telegram_user_id, membership.group_id, 'authorized');
