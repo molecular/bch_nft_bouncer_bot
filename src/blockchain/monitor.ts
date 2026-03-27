@@ -597,12 +597,13 @@ export async function checkGroupVerifications(groupId: number): Promise<{
 
   for (const membership of memberships) {
     try {
-      // If no rules left, all authorized users should be restricted
+      // If no rules left, everyone is allowed - grant access to restricted users
       if (rules.length === 0) {
-        if (membership.status === 'authorized') {
-          invalid++;
-          const username = await revokeAccess(membership, { skipGroupMessage: true });
-          if (username) restrictedUsernames.push(username);
+        if (membership.status === 'restricted') {
+          valid++;
+          await grantAccess(membership, { satisfied: true, nftSatisfied: true, balanceSatisfied: true, nftResults: [], balanceResults: [] });
+        } else {
+          valid++;
         }
         continue;
       }
