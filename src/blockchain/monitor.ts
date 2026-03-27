@@ -617,16 +617,20 @@ export async function checkGroupVerifications(groupId: number): Promise<{
       const isRestricted = membership.status === 'restricted';
 
       if (!result.satisfied && !isRestricted) {
+        // Authorized user no longer qualifies -> revoke
         invalid++;
         console.log(`[monitor] Group check: user ${membership.telegram_user_id} no longer qualifies - will restrict`);
         const username = await revokeAccess(membership, { skipGroupMessage: true });
         if (username) restrictedUsernames.push(username);
       } else if (result.satisfied && isRestricted) {
+        // Restricted user now qualifies -> grant access
         valid++;
         await grantAccess(membership, result);
-      } else {
+      } else if (result.satisfied) {
+        // Authorized user still qualifies
         valid++;
       }
+      // else: restricted user still doesn't qualify - no action, not counted as valid
     } catch (error) {
       console.error(`[monitor] Error checking membership for user ${membership.telegram_user_id}:`, error);
     }
