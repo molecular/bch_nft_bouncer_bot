@@ -33,6 +33,7 @@ import { config } from '../../config.js';
 import { unrestrictUser } from '../utils/permissions.js';
 import { addAddressToMonitor, removeAddressFromMonitor, checkUserVerification } from '../../blockchain/monitor.js';
 import type { AccessRule } from '../../storage/types.js';
+import { log, trackUser } from '../../utils/log.js';
 
 export const verifyHandlers = new Composer();
 
@@ -103,7 +104,10 @@ verifyHandlers.command('start', async (ctx: Context) => {
 
 // /verify - Start verification process
 verifyHandlers.command('verify', async (ctx: Context) => {
-  console.log(`/verify command received, chat type: ${ctx.chat?.type}, chat id: ${ctx.chat?.id}`);
+  if (ctx.from) {
+    trackUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+  }
+  log('verify', `/verify command, chat type: ${ctx.chat?.type}`, ctx.from?.id, { groupId: ctx.chat?.id });
   if (ctx.chat?.type !== 'private') {
     // In a group, reply with the deeplink
     const chatId = ctx.chat!.id;
@@ -421,7 +425,7 @@ async function startWalletConnectFlow(
     handleWcVerification(ctx, userId, state);
 
   } catch (error) {
-    console.error('WalletConnect flow error:', error);
+    log('WC', `flow error: ${error}`, userId);
     // Fall back gracefully
     state.step = 'address';
     await ctx.reply(
@@ -537,7 +541,7 @@ verifyHandlers.command('sign', async (ctx: Context) => {
     verificationState.delete(userId);
 
   } catch (error: any) {
-    console.error('Sign retry error:', error);
+    log('verify', `sign retry error: ${error}`, userId);
 
     const isRejection = error?.message?.includes('rejected') || error?.message?.includes('Rejected') || error?.code === 5000;
     const isTimeout = error?.message?.includes('expired') || error?.message?.includes('timeout');
@@ -586,7 +590,7 @@ async function handleWcVerification(
           '• Or send your BCH address for manual verification'
         );
       } catch (replyError) {
-        console.error('Failed to send rejection reply:', replyError);
+        log('WC', `failed to send rejection reply: ${replyError}`, userId);
       }
       return;
     }
@@ -721,7 +725,7 @@ async function handleWcVerification(
           }
 
         } catch (error: any) {
-          console.error('WC signature error:', error);
+          log('WC', `signature error: ${error}`, userId);
           deleteChallenge(challenge.id);
 
           const isRejection = error?.message?.includes('rejected') || error?.message?.includes('Rejected') || error?.code === 5000;
@@ -740,7 +744,7 @@ async function handleWcVerification(
         }
 
       } catch (error: any) {
-        console.error('WC verification error:', error);
+        log('WC', `verification error: ${error}`, userId);
 
         const isTimeout = error?.message?.includes('expired') || error?.message?.includes('timeout');
         const isRejection = error?.message?.includes('rejected') || error?.message?.includes('Rejected') || error?.code === 5000;
@@ -797,13 +801,13 @@ async function handleWcVerification(
 
     // Continue polling
     setTimeout(() => {
-      checkSession().catch(err => console.error('checkSession error:', err));
+      checkSession().catch(err => log('WC', `checkSession error: ${err}`, userId));
     }, 5000);
   };
 
   // Start polling after a short delay
   setTimeout(() => {
-    checkSession().catch(err => console.error('checkSession error:', err));
+    checkSession().catch(err => log('WC', `checkSession error: ${err}`, userId));
   }, 5000);
 }
 
@@ -922,7 +926,7 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
       await ctx.reply(msg, { parse_mode: 'Markdown' });
 
     } catch (error) {
-      console.error('Wallet check error:', error);
+      log('verify', `wallet check error: ${error}`, userId);
       await ctx.reply('❌ Error checking wallet. Please try again later.');
     }
 
@@ -1000,13 +1004,15 @@ verifyHandlers.on('message:text', async (ctx: Context, next) => {
 
 // /list_verifications - Show all user's verifications (global addresses)
 verifyHandlers.command('list_verifications', async (ctx: Context) => {
-  console.log('/list_verifications command received');
+  const userId = ctx.from!.id;
+  if (ctx.from) {
+    trackUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+  }
+  log('verify', '/list_verifications command', userId);
   if (ctx.chat?.type !== 'private') {
     await ctx.reply('Please use this command in a private chat with me.');
     return;
   }
-
-  const userId = ctx.from!.id;
   const verifications = getVerificationsForUser(userId);
 
   if (verifications.length === 0) {
@@ -1135,13 +1141,15 @@ verifyHandlers.command('status', async (ctx: Context) => {
 
 // /unverify - Remove a verification
 verifyHandlers.command('unverify', async (ctx: Context) => {
-  console.log(`/unverify command received from user ${ctx.from?.id}`);
+  const userId = ctx.from!.id;
+  if (ctx.from) {
+    trackUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+  }
+  log('verify', '/unverify command', userId);
   if (ctx.chat?.type !== 'private') {
     await ctx.reply('Please use this command in a private chat with me.');
     return;
   }
-
-  const userId = ctx.from!.id;
   const args = (ctx.match as string || '').trim();
 
   if (!args) {
@@ -1175,7 +1183,7 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
 
   // Delete the verification
   deleteVerification(verificationId);
-  console.log(`[unverify] User ${userId} deleted verification ${verificationId} for address ${address}`);
+  log('verify', `deleted verification ${verificationId} for address ${address.slice(0, 25)}...`, userId);
 
   // Check if any other verifications use this address
   const otherVerifications = getVerificationsByAddress(address);
@@ -1249,7 +1257,7 @@ async function addUserToGroup(
   userId: number,
   groupId: number
 ): Promise<void> {
-  console.log(`[addUserToGroup] Granting access to user ${userId} in group ${groupId}`);
+  log('verify', 'granting access', userId, { groupId });
   try {
     // Get membership info before updating (we need the prompt_message_id)
     const membership = getGroupMembership(userId, groupId);
@@ -1262,7 +1270,7 @@ async function addUserToGroup(
     }
 
     await unrestrictUser(ctx.api, groupId, userId);
-    console.log(`[addUserToGroup] Successfully granted access to user ${userId}`);
+    log('verify', 'successfully granted access', userId, { groupId });
 
     // Delete the verification prompt message from the group if we have the message ID
     if (membership?.prompt_message_id) {
@@ -1299,7 +1307,7 @@ async function addUserToGroup(
 
     await ctx.reply(`✅ You now have full access to the group!${groupLink}`);
   } catch (error: any) {
-    console.error(`[addUserToGroup] Error unrestricting user ${userId}:`, error.message);
+    log('verify', `error unrestricting: ${error.message}`, userId, { groupId });
     await ctx.reply(
       'Verification complete, but I couldn\'t update your permissions. Please ask a group admin.'
     );

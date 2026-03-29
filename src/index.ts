@@ -8,20 +8,24 @@ import { createBot } from './bot/bot.js';
 import { startMonitoring, stopMonitoring } from './blockchain/monitor.js';
 import { initWalletConnect, closeWalletConnect } from './walletconnect/session.js';
 import { checkMembershipTimeouts } from './bot/timeouts.js';
+import { log, initLogging } from './utils/log.js';
 
 async function main(): Promise<void> {
-  console.log('🚀 Starting NFT Entry Bot...');
+  log('startup', 'Starting NFT Entry Bot...');
 
   // Validate config
   try {
     validateConfig();
   } catch (error) {
-    console.error('Configuration error:', error);
+    log('startup', `Configuration error: ${error}`);
     process.exit(1);
   }
 
   // Initialize database
   initializeDatabase();
+
+  // Initialize logging (load username cache from DB)
+  initLogging();
 
   // Clean up expired challenges
   cleanupExpiredChallenges();
@@ -30,12 +34,12 @@ async function main(): Promise<void> {
   if (config.wcProjectId) {
     try {
       await initWalletConnect();
-      console.log('✅ WalletConnect initialized');
+      log('startup', 'WalletConnect initialized');
     } catch (error) {
-      console.error('WalletConnect initialization failed (continuing without it):', error);
+      log('startup', `WalletConnect initialization failed (continuing without it): ${error}`);
     }
   } else {
-    console.log('ℹ️  WalletConnect not configured (WC_PROJECT_ID not set)');
+    log('startup', 'WalletConnect not configured (WC_PROJECT_ID not set)');
   }
 
   // Create and start bot
@@ -43,7 +47,7 @@ async function main(): Promise<void> {
 
   // Start NFT transfer monitoring (with address subscriptions)
   await startMonitoring(bot);
-  console.log('✅ NFT monitoring started');
+  log('startup', 'NFT monitoring started');
 
   // Periodic cleanup of expired challenges
   setInterval(() => {
@@ -57,14 +61,14 @@ async function main(): Promise<void> {
 
   // Handle shutdown
   const shutdown = async (signal: string): Promise<void> => {
-    console.log(`\n${signal} received, shutting down...`);
+    log('startup', `${signal} received, shutting down...`);
 
     stopMonitoring();
     await closeWalletConnect();
     closeDatabase();
 
     await bot.stop();
-    console.log('Bot stopped');
+    log('startup', 'Bot stopped');
     process.exit(0);
   };
 
@@ -73,12 +77,12 @@ async function main(): Promise<void> {
 
   // Handle uncaught promise rejections (e.g., WalletConnect timeouts)
   process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled rejection:', reason);
+    log('error', `Unhandled rejection: ${reason}`);
     // Don't crash - just log it
   });
 
   // Start polling
-  console.log('✅ Bot starting...');
+  log('startup', 'Bot starting...');
 
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start the bot' },
@@ -92,12 +96,12 @@ async function main(): Promise<void> {
   await bot.start({
     allowed_updates: ['message', 'chat_member', 'my_chat_member'],
     onStart: (botInfo) => {
-      console.log(`✅ Bot @${botInfo.username} is running!`);
+      log('startup', `Bot @${botInfo.username} is running!`);
     },
   });
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  log('startup', `Fatal error: ${error}`);
   process.exit(1);
 });

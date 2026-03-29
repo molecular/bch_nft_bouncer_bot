@@ -12,21 +12,25 @@ import {
 import { restrictUser, unrestrictUser, unrestrictIfNeeded } from '../utils/permissions.js';
 import { fetchTokenMetadata, formatTokenName } from '../../blockchain/bcmr.js';
 import { checkAccessRulesMultiAddress } from '../../blockchain/nft.js';
+import { log, trackUser } from '../../utils/log.js';
 
 export const joinHandlers = new Composer();
 
 // Handle new chat members
 joinHandlers.on('chat_member', async (ctx: Context) => {
-  console.log('[chat_member] Event received');
+  log('chat_member', 'Event received');
   const update = ctx.chatMember;
   if (!update) {
-    console.log('[chat_member] No update data');
+    log('chat_member', 'No update data');
     return;
   }
 
   const { chat, new_chat_member, old_chat_member } = update;
 
-  console.log(`[chat_member] User ${new_chat_member.user.id}: ${old_chat_member.status} -> ${new_chat_member.status}`);
+  // Track user info
+  trackUser(new_chat_member.user.id, new_chat_member.user.username, new_chat_member.user.first_name);
+
+  log('chat_member', `${old_chat_member.status} -> ${new_chat_member.status}`, new_chat_member.user.id, { groupId: chat.id });
 
   // Handle joins OR status becoming restricted (might be verified user who needs unrestriction)
   const wasNotMember = ['left', 'kicked', 'banned'].includes(old_chat_member.status);
@@ -35,7 +39,7 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
 
   // Process if: joining from outside, OR status changed to restricted (might need to fix verified user)
   if (!((wasNotMember && isNowMember) || becameRestricted)) {
-    console.log(`[chat_member] Skipping: wasNotMember=${wasNotMember}, isNowMember=${isNowMember}, becameRestricted=${becameRestricted}`);
+    log('chat_member', `Skipping: wasNotMember=${wasNotMember}, isNowMember=${isNowMember}, becameRestricted=${becameRestricted}`, new_chat_member.user.id);
     return;
   }
 
@@ -65,12 +69,12 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
   if (membership?.status === 'authorized') {
     // User is already authorized - ensure unrestricted (skip for admins)
     if (!isAdmin) {
-      console.log(`User ${userId} authorized for group ${chatId}, ensuring unrestricted`);
+      log('join', 'authorized, ensuring unrestricted', userId, { groupId: chatId });
       try {
         await unrestrictUser(ctx.api, chatId, userId);
-        console.log(`User ${userId} unrestricted on rejoin`);
+        log('join', 'unrestricted on rejoin', userId, { groupId: chatId });
       } catch (error: any) {
-        console.error(`Failed to unrestrict authorized user ${userId}:`, error.message);
+        log('join', `failed to unrestrict: ${error.message}`, userId, { groupId: chatId });
       }
     }
     return;
@@ -78,7 +82,7 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
 
   // If no rules configured, everyone qualifies
   if (rules.length === 0) {
-    console.log(`User ${userId} joins group ${chatId} with no rules - auto-authorized`);
+    log('join', 'no rules - auto-authorized', userId, { groupId: chatId });
     addGroupMembership(userId, chatId, 'authorized');
     return;
   }
@@ -88,13 +92,13 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
     const result = await checkAccessRulesMultiAddress(userAddresses, rules);
     if (result.satisfied) {
       // User qualifies - add as authorized and unrestrict (skip unrestrict for admins)
-      console.log(`User ${userId} verifications qualify for group ${chatId}, granting access`);
+      log('join', 'verifications qualify, granting access', userId, { groupId: chatId });
       addGroupMembership(userId, chatId, 'authorized');
       if (!isAdmin) {
         try {
           await unrestrictUser(ctx.api, chatId, userId);
         } catch (error: any) {
-          console.error(`Failed to unrestrict qualifying user ${userId}:`, error.message);
+          log('join', `failed to unrestrict qualifying user: ${error.message}`, userId, { groupId: chatId });
         }
       }
       return;
@@ -103,19 +107,19 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
 
   // Check if we've already tracked this user (avoid duplicate prompts)
   if (membership) {
-    console.log(`User ${userId} already has membership record (status: ${membership.status}), skipping prompt`);
+    log('join', `already has membership (status: ${membership.status}), skipping prompt`, userId, { groupId: chatId });
     return;
   }
 
   // Admins get tracked as authorized without needing to verify
   if (isAdmin) {
-    console.log(`Admin ${userId} joined group ${chatId}, tracking as authorized`);
+    log('join', 'admin joined, tracking as authorized', userId, { groupId: chatId });
     addGroupMembership(userId, chatId, 'authorized');
     return;
   }
 
   // New user who doesn't qualify - restrict until verified
-  console.log(`New user ${userId} joined group ${chatId}, restricting...`);
+  log('join', 'new user joined, restricting...', userId, { groupId: chatId });
 
   const username = new_chat_member.user.username
     ? `@${new_chat_member.user.username}`
@@ -155,14 +159,14 @@ joinHandlers.on('chat_member', async (ctx: Context) => {
         `Click here to verify:\n${deepLink}`
       );
     } catch (dmError: any) {
-      console.log(`Could not DM user ${userId}:`, dmError.message);
+      log('join', `could not DM: ${dmError.message}`, userId, { groupId: chatId });
     }
 
   } catch (error: any) {
-    console.error(`Error handling join for user ${userId}:`, error.message);
+    log('join', `error handling join: ${error.message}`, userId, { groupId: chatId });
 
     if (error.message?.includes('not enough rights')) {
-      console.error('Bot does not have permission to restrict users');
+      log('join', 'bot does not have permission to restrict users');
     }
   }
 });
@@ -179,13 +183,18 @@ joinHandlers.on('message', async (ctx: Context, next) => {
   const userId = ctx.from?.id;
   const text = (ctx.message as any)?.text || '';
 
-  console.log(`[join] message handler: user=${userId}, chat=${chatId}, text="${text.slice(0, 20)}..."`);
-
   if (!userId) return next();
+
+  // Track user if we have info
+  if (ctx.from) {
+    trackUser(userId, ctx.from.username, ctx.from.first_name);
+  }
+
+  log('join', `message in group: "${text.slice(0, 20)}..."`, userId, { groupId: chatId });
 
   // Skip command messages - let command handlers process them
   if (text.startsWith('/')) {
-    console.log(`[join] skipping command message`);
+    log('join', 'skipping command message', userId);
     return next();
   }
 
@@ -217,10 +226,10 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     try {
       const wasRestricted = await unrestrictIfNeeded(ctx.api, chatId, userId);
       if (wasRestricted) {
-        console.log(`[join] Unrestricted authorized user ${userId}`);
+        log('join', 'unrestricted authorized user', userId, { groupId: chatId });
       }
     } catch (error: any) {
-      console.error(`[join] Error unrestricting authorized user ${userId}:`, error.message);
+      log('join', `error unrestricting authorized user: ${error.message}`, userId, { groupId: chatId });
     }
     return next();
   }
@@ -228,7 +237,7 @@ joinHandlers.on('message', async (ctx: Context, next) => {
   // If no rules configured, everyone qualifies
   if (rules.length === 0) {
     if (!membership) {
-      console.log(`[join] User ${userId} in group ${chatId} with no rules - auto-authorized`);
+      log('join', 'no rules - auto-authorized', userId, { groupId: chatId });
       addGroupMembership(userId, chatId, 'authorized');
     }
     return next();
@@ -239,12 +248,12 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     const result = await checkAccessRulesMultiAddress(userAddresses, rules);
     if (result.satisfied) {
       // User qualifies - add as authorized and allow
-      console.log(`[join] User ${userId} qualifies via existing verifications`);
+      log('join', 'qualifies via existing verifications', userId, { groupId: chatId });
       addGroupMembership(userId, chatId, 'authorized');
       try {
         await unrestrictIfNeeded(ctx.api, chatId, userId);
       } catch (error: any) {
-        console.error(`[join] Error unrestricting user ${userId}:`, error.message);
+        log('join', `error unrestricting: ${error.message}`, userId, { groupId: chatId });
       }
       return next();
     }
@@ -262,7 +271,7 @@ joinHandlers.on('message', async (ctx: Context, next) => {
   }
 
   // First time seeing this user - they need verification
-  console.log(`Unverified user ${userId} posted in gated group ${chatId}, deleting message`);
+  log('join', 'unverified user posted in gated group, deleting message', userId, { groupId: chatId });
 
   try {
     // Delete the message
@@ -296,7 +305,7 @@ joinHandlers.on('message', async (ctx: Context, next) => {
     updateMembershipMessageId(userId, chatId, promptMessage.message_id);
 
   } catch (error: any) {
-    console.error(`Error handling unverified message from ${userId}:`, error.message);
+    log('join', `error handling unverified message: ${error.message}`, userId, { groupId: chatId });
   }
 });
 

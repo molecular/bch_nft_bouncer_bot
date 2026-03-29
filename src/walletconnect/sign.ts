@@ -1,4 +1,5 @@
 import { getSignClient, getUserSession, setUserAddresses } from './session.js';
+import { log } from '../utils/log.js';
 
 export interface BchAddressInfo {
   address: string;
@@ -26,7 +27,7 @@ export async function requestAddresses(telegramUserId: number): Promise<BchAddre
       },
     });
 
-    console.log('bch_getAddresses raw result:', JSON.stringify(result, null, 2));
+    log('WC', `bch_getAddresses raw result: ${JSON.stringify(result, null, 2)}`, telegramUserId);
 
     // Handle different response formats
     let addresses: string[] = [];
@@ -49,13 +50,13 @@ export async function requestAddresses(telegramUserId: number): Promise<BchAddre
     }
 
     addresses = addresses.filter(Boolean);
-    console.log('Parsed addresses:', addresses);
+    log('WC', `Parsed addresses: ${addresses.join(', ')}`, telegramUserId);
     setUserAddresses(telegramUserId, addresses);
 
     // Return in expected format
     return addresses.map(addr => ({ address: addr }));
   } catch (error) {
-    console.error('Error requesting addresses:', error);
+    log('WC', `error requesting addresses: ${error}`, telegramUserId);
     throw error;
   }
 }
@@ -88,7 +89,7 @@ export async function requestSignMessage(
       },
     });
 
-    console.log('bch_signMessage raw result:', JSON.stringify(result, null, 2));
+    log('WC', `bch_signMessage raw result: ${JSON.stringify(result, null, 2)}`, telegramUserId);
 
     // Handle different response formats
     let signature: string;
@@ -105,10 +106,10 @@ export async function requestSignMessage(
       signature = '';
     }
 
-    console.log('Parsed signature:', signature ? `${signature.slice(0, 20)}...` : 'empty');
+    log('WC', `Parsed signature: ${signature ? `${signature.slice(0, 20)}...` : 'empty'}`, telegramUserId);
     return signature;
   } catch (error) {
-    console.error('Error requesting signature:', error);
+    log('WC', `error requesting signature: ${error}`, telegramUserId);
     throw error;
   }
 }
@@ -138,7 +139,7 @@ export async function wcVerificationFlow(
 
     return { address, signature };
   } catch (error) {
-    console.error('WC verification flow error:', error);
+    log('WC', `verification flow error: ${error}`, telegramUserId);
     return null;
   }
 }

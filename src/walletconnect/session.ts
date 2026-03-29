@@ -1,5 +1,6 @@
 import { SignClient } from '@walletconnect/sign-client';
 import { config } from '../config.js';
+import { log } from '../utils/log.js';
 
 let signClient: InstanceType<typeof SignClient> | null = null;
 
@@ -62,7 +63,7 @@ export async function initWalletConnect(): Promise<InstanceType<typeof SignClien
   // Clean up any sessions that survived a restart (we have no record of them)
   const existingSessions = signClient.session.getAll();
   if (existingSessions.length > 0) {
-    console.log(`[WC] Cleaning up ${existingSessions.length} stale sessions from previous run`);
+    log('WC', `Cleaning up ${existingSessions.length} stale sessions from previous run`);
     for (const session of existingSessions) {
       try {
         await signClient.disconnect({
@@ -249,7 +250,7 @@ export async function disconnectSession(telegramUserId: number): Promise<void> {
       reason: { code: 6000, message: 'User disconnected' },
     });
   } catch (error) {
-    console.error('Error disconnecting session:', error);
+    log('WC', `error disconnecting session: ${error}`, telegramUserId);
   }
 
   userSessions.delete(telegramUserId);

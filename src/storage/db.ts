@@ -87,6 +87,25 @@ export function initializeDatabase(): void {
       UNIQUE(group_id, rule_type, category, start_commitment, end_commitment)
     );
 
+    -- Track all users we've seen (for username lookup in logs)
+    CREATE TABLE IF NOT EXISTS users (
+      telegram_user_id INTEGER PRIMARY KEY,
+      username TEXT,
+      first_name TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    -- Persistent logs for per-user analysis (user events only)
+    CREATE TABLE IF NOT EXISTS logs (
+      id INTEGER PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      category TEXT NOT NULL,
+      message TEXT NOT NULL,
+      telegram_user_id INTEGER,
+      group_id INTEGER,
+      extra TEXT  -- JSON for additional context
+    );
+
     -- Create indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_verifications_user ON verifications(telegram_user_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_address ON verifications(bch_address);
@@ -94,6 +113,9 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_group_memberships_user ON group_memberships(telegram_user_id);
     CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(group_id);
     CREATE INDEX IF NOT EXISTS idx_access_rules_group ON group_access_rules(group_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_user ON logs(telegram_user_id);
+    CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_logs_category ON logs(category);
   `);
 
   // Migration: Simplify verifications table - remove nft_category/nft_commitment and status
@@ -235,6 +257,20 @@ export function initializeDatabase(): void {
       ALTER TABLE token_metadata_new RENAME TO token_metadata;
     `);
     console.log('Removed icon_uri and image_uri columns from token_metadata');
+  }
+
+  // Migration: Populate users table with existing usernames from verifications
+  const usersCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+  if (usersCount.count === 0) {
+    const result = db.prepare(`
+      INSERT OR IGNORE INTO users (telegram_user_id, username, first_name, updated_at)
+      SELECT telegram_user_id, telegram_username, NULL, datetime('now')
+      FROM verifications
+      WHERE telegram_username IS NOT NULL
+    `).run();
+    if (result.changes > 0) {
+      console.log(`Populated users table with ${result.changes} usernames from verifications`);
+    }
   }
 
   console.log('Database initialized');

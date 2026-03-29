@@ -6,6 +6,7 @@ import {
   markMembershipWarned,
   deleteGroupMembership,
 } from '../storage/queries.js';
+import { log } from '../utils/log.js';
 
 export async function checkMembershipTimeouts(bot: Bot): Promise<void> {
   const { pendingVerificationTimeoutMinutes, pendingVerificationWarnMinutes } = config;
@@ -21,10 +22,10 @@ export async function checkMembershipTimeouts(bot: Bot): Promise<void> {
         `\u26a0\ufe0f You have ${minsLeft} minutes to verify for ${groupName} or you'll be removed. Use /verify to complete verification.`
       );
       markMembershipWarned(pk.telegram_user_id, pk.group_id);
-      console.log(`Sent warning to user ${pk.telegram_user_id} for group ${pk.group_id}`);
+      log('timeout', 'sent verification warning', pk.telegram_user_id, { groupId: pk.group_id });
     } catch (err) {
       // User may have blocked the bot or never started a DM
-      console.error(`Failed to warn user ${pk.telegram_user_id}:`, err);
+      log('timeout', `failed to warn: ${err}`, pk.telegram_user_id, { groupId: pk.group_id });
     }
   }
 
@@ -59,9 +60,9 @@ export async function checkMembershipTimeouts(bot: Bot): Promise<void> {
         // User may have blocked the bot
       }
 
-      console.log(`Kicked expired user ${pk.telegram_user_id} from group ${pk.group_id}`);
+      log('timeout', 'kicked expired user', pk.telegram_user_id, { groupId: pk.group_id });
     } catch (err) {
-      console.error(`Failed to kick expired user ${pk.telegram_user_id}:`, err);
+      log('timeout', `failed to kick: ${err}`, pk.telegram_user_id, { groupId: pk.group_id });
     }
   }
 }

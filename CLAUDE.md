@@ -46,6 +46,8 @@ ssh nil 'bash ~/bin/steve_restart'   # Restart only
 3. Deploy to production: `ssh nil 'bash ~/bin/steve_deploy'`
 4. Verify: `ssh nil 'bash ~/bin/steve_logs'`
 
+**IMPORTANT: Do NOT deploy to production without explicit user consent.** Always ask before running `steve_deploy` or any command that affects the production bot.
+
 ## Viewing bot output (for testing)
 
 run_nftbouncer.sh logs to `bot.log`, which can be `tail`ed to see output.
