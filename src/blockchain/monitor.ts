@@ -39,11 +39,6 @@ let botInstance: Bot | null = null;
 // Track subscriptions: address -> cancel function
 const addressSubscriptions = new Map<string, () => void>();
 
-// Track when each address was added (to ignore notifications in first few seconds)
-const addressAddedTimes = new Map<string, number>();
-
-const SUBSCRIPTION_WARMUP_MS = 3000; // Ignore notifications for 3 seconds after subscribing
-
 /**
  * Start monitoring verified addresses for NFT transfers
  */
@@ -81,7 +76,6 @@ export function stopMonitoring(): void {
     }
   }
   addressSubscriptions.clear();
-  addressAddedTimes.clear();
 
   botInstance = null;
   log('monitor', 'NFT monitoring stopped');
@@ -99,12 +93,6 @@ async function subscribeToAddress(address: string): Promise<void> {
     const provider = await getProvider();
 
     const cancel = await provider.subscribeToAddress(address, async (status: any) => {
-      // Ignore notifications during warmup period
-      const addedTime = addressAddedTimes.get(address) || 0;
-      if (Date.now() - addedTime < SUBSCRIPTION_WARMUP_MS) {
-        return;
-      }
-
       log('monitor', `Address change: ${address}`);
 
       // Check all verifications for this address
@@ -125,7 +113,6 @@ export async function addAddressToMonitor(address: string): Promise<void> {
     return; // Already monitoring
   }
 
-  addressAddedTimes.set(address, Date.now());
   await subscribeToAddress(address);
   log('monitor', `Now monitoring ${address} (${addressSubscriptions.size} total)`);
 }
@@ -142,7 +129,6 @@ export function removeAddressFromMonitor(address: string): void {
       // Ignore cancellation errors
     }
     addressSubscriptions.delete(address);
-    addressAddedTimes.delete(address);
     log('monitor', `Stopped monitoring ${address} (${addressSubscriptions.size} remaining)`);
   }
 }
