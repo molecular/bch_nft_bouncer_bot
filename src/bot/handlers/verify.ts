@@ -1135,6 +1135,7 @@ verifyHandlers.command('status', async (ctx: Context) => {
 
 // /unverify - Remove a verification
 verifyHandlers.command('unverify', async (ctx: Context) => {
+  console.log(`/unverify command received from user ${ctx.from?.id}`);
   if (ctx.chat?.type !== 'private') {
     await ctx.reply('Please use this command in a private chat with me.');
     return;
@@ -1174,6 +1175,7 @@ verifyHandlers.command('unverify', async (ctx: Context) => {
 
   // Delete the verification
   deleteVerification(verificationId);
+  console.log(`[unverify] User ${userId} deleted verification ${verificationId} for address ${address}`);
 
   // Check if any other verifications use this address
   const otherVerifications = getVerificationsByAddress(address);

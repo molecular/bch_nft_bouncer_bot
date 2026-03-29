@@ -59,6 +59,22 @@ export async function initWalletConnect(): Promise<InstanceType<typeof SignClien
     }
   });
 
+  // Clean up any sessions that survived a restart (we have no record of them)
+  const existingSessions = signClient.session.getAll();
+  if (existingSessions.length > 0) {
+    console.log(`[WC] Cleaning up ${existingSessions.length} stale sessions from previous run`);
+    for (const session of existingSessions) {
+      try {
+        await signClient.disconnect({
+          topic: session.topic,
+          reason: { code: 6000, message: 'Bot restarted' },
+        });
+      } catch {
+        // Ignore errors during cleanup
+      }
+    }
+  }
+
   return signClient;
 }
 
