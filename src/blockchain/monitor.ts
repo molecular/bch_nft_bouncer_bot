@@ -518,9 +518,23 @@ async function revokeAccess(
       const groupName = group?.name || `Group ${membership.group_id}`;
       const botUsername = botInstance.botInfo.username;
       const verifyLink = `https://t.me/${botUsername}?start=verify_${membership.group_id}`;
+
+      // Try to get group link so user can find the group again
+      let groupNameDisplay = `*${escapeMarkdown(groupName)}*`;
+      try {
+        const chat = await botInstance.api.getChat(membership.group_id);
+        if ('username' in chat && chat.username) {
+          groupNameDisplay = `[${escapeMarkdown(groupName)}](https://t.me/${chat.username})`;
+        } else if ('invite_link' in chat && chat.invite_link) {
+          groupNameDisplay = `[${escapeMarkdown(groupName)}](${chat.invite_link})`;
+        }
+      } catch {
+        // Keep bold name if we can't get link
+      }
+
       await botInstance.api.sendMessage(
         membership.telegram_user_id,
-        `⚠️ Your wallet no longer meets the access requirements for *${escapeMarkdown(groupName)}*.\n\n` +
+        `⚠️ Your wallet no longer meets the access requirements for ${groupNameDisplay}.\n\n` +
         `You've been restricted. Verify to regain access: ${verifyLink}`,
         { parse_mode: 'Markdown' }
       );
