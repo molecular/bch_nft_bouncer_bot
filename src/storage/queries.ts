@@ -255,9 +255,18 @@ export function setMembershipStatus(
   groupId: number,
   status: MembershipStatus
 ): void {
-  db.prepare(`
-    UPDATE group_memberships SET status = ? WHERE telegram_user_id = ? AND group_id = ?
-  `).run(status, userId, groupId);
+  if (status === 'restricted') {
+    // Reset joined_at and warning_sent when restricting - gives fresh timeout period
+    db.prepare(`
+      UPDATE group_memberships
+      SET status = ?, joined_at = datetime('now'), warning_sent = 0
+      WHERE telegram_user_id = ? AND group_id = ?
+    `).run(status, userId, groupId);
+  } else {
+    db.prepare(`
+      UPDATE group_memberships SET status = ? WHERE telegram_user_id = ? AND group_id = ?
+    `).run(status, userId, groupId);
+  }
 }
 
 export function updateMembershipMessageId(telegramUserId: number, groupId: number, messageId: number): void {

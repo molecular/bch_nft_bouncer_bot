@@ -457,12 +457,12 @@ async function checkAllVerifications(): Promise<void> {
 
 /**
  * Revoke access when user no longer meets conditions
- * Returns the username if successfully restricted (for batched notifications)
+ * Returns user info if successfully restricted (for batched notifications)
  */
 async function revokeAccess(
   membership: GroupMembership,
   options?: { skipGroupMessage?: boolean }
-): Promise<string | null> {
+): Promise<{ userId: number; displayName: string } | null> {
   if (!botInstance) {
     log('monitor', 'Bot instance not available for revoking access');
     return null;
@@ -485,10 +485,10 @@ async function revokeAccess(
       return null;
     }
 
-    // Get username for return value
-    let username = 'User';
+    // Get display name for return value
+    let displayName = 'User';
     if ('user' in member && member.user) {
-      username = member.user.username ? `@${member.user.username}` : member.user.first_name;
+      displayName = member.user.username ? `@${member.user.username}` : member.user.first_name;
     }
 
     // Restrict the user
@@ -506,7 +506,7 @@ async function revokeAccess(
     // Send "restricted" message to the group (unless batching)
     if (!options?.skipGroupMessage) {
       try {
-        await sendRestrictedMessage(botInstance.api, membership.group_id, username);
+        await sendRestrictedMessage(botInstance.api, membership.group_id, displayName);
       } catch {
         // May fail if bot can't send to the group
       }
@@ -516,18 +516,19 @@ async function revokeAccess(
     try {
       const group = getGroup(membership.group_id);
       const groupName = group?.name || `Group ${membership.group_id}`;
+      const botUsername = botInstance.botInfo.username;
+      const verifyLink = `https://t.me/${botUsername}?start=verify_${membership.group_id}`;
       await botInstance.api.sendMessage(
         membership.telegram_user_id,
         `⚠️ Your wallet no longer meets the access requirements for *${escapeMarkdown(groupName)}*.\n\n` +
-        `You've been restricted until you meet the requirements again.\n\n` +
-        `I'm still monitoring your address - you'll be automatically re-activated once conditions are met again!`,
+        `You've been restricted. Verify to regain access: ${verifyLink}`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {
       log('monitor', `could not DM about restriction: ${dmError}`, membership.telegram_user_id);
     }
 
-    return username;
+    return { userId: membership.telegram_user_id, displayName };
 
   } catch (error) {
     log('monitor', `error revoking access: ${error}`, membership.telegram_user_id, { groupId: membership.group_id });
@@ -572,7 +573,7 @@ export async function checkGroupVerifications(groupId: number): Promise<{
 
   let valid = 0;
   let invalid = 0;
-  const restrictedUsernames: string[] = [];
+  const restrictedUsers: { userId: number; displayName: string }[] = [];
 
   for (const membership of memberships) {
     try {
@@ -599,8 +600,8 @@ export async function checkGroupVerifications(groupId: number): Promise<{
         // Authorized user no longer qualifies -> revoke
         invalid++;
         log('monitor', 'group check: no longer qualifies - will restrict', membership.telegram_user_id, { groupId });
-        const username = await revokeAccess(membership, { skipGroupMessage: true });
-        if (username) restrictedUsernames.push(username);
+        const userInfo = await revokeAccess(membership, { skipGroupMessage: true });
+        if (userInfo) restrictedUsers.push(userInfo);
       } else if (result.satisfied && isRestricted) {
         // Restricted user now qualifies -> grant access
         valid++;
@@ -616,22 +617,31 @@ export async function checkGroupVerifications(groupId: number): Promise<{
   }
 
   // Send batched group notification if any users were restricted
-  if (restrictedUsernames.length > 0 && botInstance) {
+  if (restrictedUsers.length > 0 && botInstance) {
     try {
       const botUsername = botInstance.botInfo.username;
       const verifyLink = `https://t.me/${botUsername}?start=verify_${groupId}`;
 
+      // Format user mentions - use text mention for users without @ username
+      const formatMention = (u: { userId: number; displayName: string }) => {
+        if (u.displayName.startsWith('@')) {
+          return u.displayName; // Already has @username
+        }
+        return `[${u.displayName}](tg://user?id=${u.userId})`;
+      };
+
       let msg: string;
-      if (restrictedUsernames.length === 1) {
-        msg = `👎 ${restrictedUsernames[0]} no longer meets requirements and has been restricted.\n\n` +
+      if (restrictedUsers.length === 1) {
+        msg = `👎 ${formatMention(restrictedUsers[0])} no longer meets requirements and has been restricted.\n\n` +
               `Verify again: ${verifyLink}`;
       } else {
-        msg = `👎 ${restrictedUsernames.length} users no longer meet requirements and have been restricted:\n` +
-              restrictedUsernames.join(', ') + `\n\n` +
+        const mentions = restrictedUsers.map(formatMention).join(', ');
+        msg = `👎 ${restrictedUsers.length} users no longer meet requirements and have been restricted:\n` +
+              mentions + `\n\n` +
               `Verify again: ${verifyLink}`;
       }
 
-      await botInstance.api.sendMessage(groupId, msg);
+      await botInstance.api.sendMessage(groupId, msg, { parse_mode: 'Markdown' });
     } catch {
       // May fail if bot can't send to the group
     }
