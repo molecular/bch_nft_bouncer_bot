@@ -158,7 +158,6 @@ async function checkAddressVerifications(address: string): Promise<void> {
 
         // If no rules configured, skip
         if (rules.length === 0) {
-          log('subscription', `No rules for group, skipping`, userId, { groupId: membership.group_id });
           continue;
         }
 
@@ -166,8 +165,6 @@ async function checkAddressVerifications(address: string): Promise<void> {
         const result = await checkAccessRulesMultiAddress(userAddresses, rules);
 
         const isRestricted = membership.status === 'restricted';
-
-        log('subscription', `status=${membership.status}, satisfied=${result.satisfied}`, userId, { groupId: membership.group_id });
 
         // Check if condition state changed
         const newStateKey = getConditionStateKey(result);
