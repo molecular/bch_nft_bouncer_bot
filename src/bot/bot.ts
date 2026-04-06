@@ -3,12 +3,14 @@ import { config } from '../config.js';
 import { adminHandlers } from './handlers/admin.js';
 import { verifyHandlers } from './handlers/verify.js';
 import { joinHandlers } from './handlers/join.js';
+import { log } from '../utils/log.js';
 
 export function createBot(): Bot {
   const bot = new Bot(config.botToken);
 
-  // Error handler
+  // Error handler for update processing errors
   bot.catch((err) => {
+    log('bot', `Error processing update: ${err.error}`);
     console.error('Bot error:', err);
   });
 

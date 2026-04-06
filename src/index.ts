@@ -59,6 +59,11 @@ async function main(): Promise<void> {
     checkMembershipTimeouts(bot);
   }, 2 * 60 * 1000);
 
+  // Periodic alive indicator (every 6 hours)
+  setInterval(() => {
+    log('heartbeat', 'Bot is alive');
+  }, 6 * 60 * 60 * 1000);
+
   // Handle shutdown
   const shutdown = async (signal: string): Promise<void> => {
     log('startup', `${signal} received, shutting down...`);

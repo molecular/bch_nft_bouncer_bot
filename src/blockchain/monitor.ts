@@ -1,4 +1,4 @@
-import { getProvider } from './wallet.js';
+import { getProvider, startHeartbeat, stopHeartbeat, setOnReconnect } from './wallet.js';
 import { checkAccessRulesMultiAddress } from './nft.js';
 import { sendVerifiedMessage, sendRestrictedMessage, escapeMarkdown } from '../bot/utils/verification.js';
 import {
@@ -52,6 +52,15 @@ export async function startMonitoring(bot: Bot): Promise<void> {
 
   log('monitor', 'Starting NFT transfer monitoring...');
 
+  // Set up reconnection handler to restore subscriptions after connection loss
+  setOnReconnect(async () => {
+    log('monitor', 'Connection restored - resubscribing to addresses...');
+    await resubscribeAllAddresses();
+  });
+
+  // Start connection health monitoring
+  startHeartbeat();
+
   // Subscribe to all existing verified addresses
   const addresses = getAllVerifiedAddresses();
   log('monitor', `Subscribing to ${addresses.length} addresses`);
@@ -64,9 +73,30 @@ export async function startMonitoring(bot: Bot): Promise<void> {
 }
 
 /**
+ * Resubscribe to all addresses after connection loss
+ */
+async function resubscribeAllAddresses(): Promise<void> {
+  // Clear old (dead) subscriptions
+  addressSubscriptions.clear();
+
+  // Resubscribe to all verified addresses
+  const addresses = getAllVerifiedAddresses();
+  log('monitor', `Resubscribing to ${addresses.length} addresses`);
+  for (const address of addresses) {
+    await addAddressToMonitor(address);
+  }
+
+  // Re-check all verifications in case anything changed while disconnected
+  checkAllVerifications();
+}
+
+/**
  * Stop monitoring
  */
 export function stopMonitoring(): void {
+  // Stop connection health monitoring
+  stopHeartbeat();
+
   // Cancel all subscriptions
   for (const [address, cancel] of addressSubscriptions) {
     try {
