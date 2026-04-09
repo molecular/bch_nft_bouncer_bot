@@ -52,6 +52,15 @@ ssh nil 'bash ~/bin/steve_restart'   # Restart only
 
 run_nftbouncer.sh logs to `bot.log`, which can be `tail`ed to see output.
 
+## Database
+
+SQLite database at `data/bot.db`. Key tables:
+- `users` - telegram user info (telegram_user_id, username, first_name)
+- `verifications` - verified BCH addresses per user
+- `groups` - telegram groups the bot manages
+- `group_access_rules` - NFT/token requirements per group
+- `group_memberships` - user membership status per group
+
 ## Testing Methodology
 
 No automated tests. Telegram bots are difficult to test automatically (can't create test accounts freely, real interactions require manual effort).
