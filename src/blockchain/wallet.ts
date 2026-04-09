@@ -6,12 +6,14 @@ let provider: NetworkProvider | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let lastHeartbeatSuccess: Date | null = null;
 let consecutiveFailures = 0;
+let isReconnecting = false;
 
 // Callback for when connection is restored after failure
 let onReconnect: (() => void) | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 60_000; // Check every minute
 const HEARTBEAT_TIMEOUT_MS = 10_000;  // 10 second timeout for health check
+const RECONNECT_DELAY_MS = 5_000;     // Wait before reconnect attempt
 
 export function setOnReconnect(callback: () => void): void {
   onReconnect = callback;
@@ -56,7 +58,8 @@ export function stopHeartbeat(): void {
  * Check connection health by calling ready() with a timeout
  */
 async function checkConnectionHealth(): Promise<void> {
-  if (!provider) return;
+  // Skip health check while reconnection is in progress
+  if (!provider || isReconnecting) return;
 
   try {
     // Use ready() with timeout to check if connection is alive
@@ -75,9 +78,8 @@ async function checkConnectionHealth(): Promise<void> {
     log('electrum', `Heartbeat failed (${consecutiveFailures} consecutive): ${error}`);
 
     // After 3 consecutive failures, try to reconnect
-    if (consecutiveFailures >= 3) {
-      log('electrum', 'Attempting reconnection...');
-      await attemptReconnect();
+    if (consecutiveFailures >= 3 && !isReconnecting) {
+      attemptReconnect(); // Don't await - let it run in background
     }
   }
 }
@@ -86,15 +88,25 @@ async function checkConnectionHealth(): Promise<void> {
  * Attempt to reconnect by creating a new provider
  */
 async function attemptReconnect(): Promise<void> {
+  // Prevent concurrent reconnection attempts
+  if (isReconnecting) return;
+  isReconnecting = true;
+
+  log('electrum', 'Attempting reconnection...');
+
   try {
-    // Disconnect old provider
+    // Disconnect old provider and clear reference
     if (provider) {
       try {
         await provider.disconnect();
       } catch {
         // Ignore disconnect errors
       }
+      provider = null;
     }
+
+    // Wait a bit for socket cleanup before creating new connection
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_DELAY_MS));
 
     // Create new provider
     const servers = config.electrumServer ? config.electrumServer : undefined;
@@ -111,6 +123,9 @@ async function attemptReconnect(): Promise<void> {
     onReconnect?.();
   } catch (error) {
     log('electrum', `Reconnection failed: ${error}`);
+    // Keep trying on next heartbeat cycle
+  } finally {
+    isReconnecting = false;
   }
 }
 
@@ -121,16 +136,19 @@ export function getConnectionStatus(): {
   connected: boolean;
   lastSuccess: Date | null;
   consecutiveFailures: number;
+  reconnecting: boolean;
 } {
   return {
     connected: consecutiveFailures === 0 && lastHeartbeatSuccess !== null,
     lastSuccess: lastHeartbeatSuccess,
     consecutiveFailures,
+    reconnecting: isReconnecting,
   };
 }
 
 export async function disconnectProvider(): Promise<void> {
   stopHeartbeat();
+  isReconnecting = false;
   if (provider) {
     try {
       await provider.disconnect();
