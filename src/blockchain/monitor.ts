@@ -565,7 +565,7 @@ async function revokeAccess(
       await botInstance.api.sendMessage(
         membership.telegram_user_id,
         `⚠️ Your wallet no longer meets the access requirements for ${groupNameDisplay}.\n\n` +
-        `You've been restricted. Verify to regain access: ${verifyLink}`,
+        `You've been restricted. [Verify to regain access](${verifyLink})`,
         { parse_mode: 'Markdown' }
       );
     } catch (dmError) {
@@ -677,12 +677,12 @@ export async function checkGroupVerifications(groupId: number): Promise<{
       let msg: string;
       if (restrictedUsers.length === 1) {
         msg = `👎 ${formatMention(restrictedUsers[0])} no longer meets requirements and has been restricted.\n\n` +
-              `Verify again: ${verifyLink}`;
+              `[Verify again](${verifyLink})`;
       } else {
         const mentions = restrictedUsers.map(formatMention).join(', ');
         msg = `👎 ${restrictedUsers.length} users no longer meet requirements and have been restricted:\n` +
               mentions + `\n\n` +
-              `Verify again: ${verifyLink}`;
+              `[Verify again](${verifyLink})`;
       }
 
       await botInstance.api.sendMessage(groupId, msg, { parse_mode: 'Markdown' });
